@@ -1,7 +1,7 @@
 # PROJECT WORKLOG — CryptoEarn Agent
-**Last updated:** 2026-09-04 Round 3 (v0.4.0 — full v2 tab restyling + sheet bug fixes)
-**Repository target:** https://github.com/SHARADEX2/cryptoearn-agent
-**Status:** Deployed in sandbox, dashboard v2 complete across all tabs, CI workflow ready
+**Last updated:** 2026-09-05 Round 11 (v0.5.0 — system ON GITHUB, first task DELIVERED: PR #17)
+**Repository:** https://github.com/SHARADEX/crypto-agent-x (push works via origin pushurl)
+**Status:** Live on GitHub with CI; first real bounty submission delivered (fibonacci $50, PR #17 awaiting merge); 4 pipeline root-causes fixed end-to-end
 
 ---
 
