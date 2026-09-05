@@ -1,0 +1,656 @@
+     1→# PROJECT WORKLOG — CryptoEarn Agent
+     2→**Last updated:** 2026-09-04 Round 3 (v0.4.0 — full v2 tab restyling + sheet bug fixes)
+     3→**Repository target:** https://github.com/SHARADEX2/cryptoearn-agent
+     4→**Status:** Deployed in sandbox, dashboard v2 complete across all tabs, CI workflow ready
+     5→
+     6→---
+     7→
+     8→# PART 1 — SYSTEM ASSESSMENT (user request: "see if it is eligible to earn crypto currency")
+     9→
+    10→## Verdict: ELIGIBLE — as a pipeline, with one honest caveat on execution
+    11→
+    12→The system built with GLM 5.2 is a **legitimate, well-engineered zero-cost earning
+    13→pipeline**, not vaporware. What it does well:
+    14→
+    15→1. **Discovery works for real.** The GitHub bounty scanner found 124 real
+    16→   opportunities on its first cycle in this sandbox (real GitHub issues with
+    17→   bounties from real orgs). Scam detection correctly rejected fake-airdrop
+    18→   opportunities in the same run.
+    19→2. **Zero-cost architecture is genuine.** Free-tier LLM providers (Z.AI SDK
+    20→   auto-provisions in-sandbox, Groq/Gemini/Cerebras/HF/Mistral/Cloudflare keys
+    21→   are optional), SQLite/Neon-free-tier Postgres, GitHub Actions cron (2,000
+    22→   free min/month on free tier) — no component requires payment.
+    23→3. **Deterministic safety is production-grade.** LLM proposes, deterministic
+    24→   code decides. Kill switch (3 mechanisms), policy engine, budget caps,
+    25→   idempotency records, read-only wallets (no private keys ever), prompt-
+    26→   injection sanitizer, scam detector. 362 tests passing upstream.
+    27→4. **Economics are honest.** EXPECTED vs VERIFIED earnings never mixed;
+    28→   payments verified on-chain via read-only wallet monitoring (5 chains).
+    29→
+    30→## The caveat: the earnings bottleneck is EXECUTION, not discovery
+    31→
+    32→The pipeline currently discovers + verifies + scores + plans, then **simulates
+    33→submission** for most opportunity types. The GitHub PR adapter is real code
+    34→(mock-tested), and the worklog shows the intended path: low-risk GitHub bounty
+    35→($50–200, riskScore < 30) → agent generates code → human approves → PR
+    36→submitted with GH_PAT → monitor merge → verify payment on-chain.
+    37→
+    38→**The zero-dollar balance shown in the dashboard is therefore expected** — no
+    39→real PR has been submitted yet. First real earning requires:
+    40→1. GITHUB_TOKEN added via terminal: `echo 'GITHUB_TOKEN=...' >> .env`
+    41→2. Autonomy mode raised: observe → assist/semi (allows L1/L2 execution)
+    42→3. A pending approval approved on the Approvals tab
+    43→4. GitHub Actions running the 4-hourly cycle with DATABASE_URL + secrets set
+    44→
+    45→## Financial realism (important for the user)
+    46→- GitHub bounties are real but competitive; expect days-to-weeks per merge.
+    47→- The strategy allocator learning loop needs real attempt data to optimize.
+    48→- Zero-cost ceiling: free LLM tiers are rate-limited; the budget manager
+    49→  handles this correctly (8.9k/250k tokens used on first cycle).
+    50→
+    51→---
+    52→
+    53→# PART 2 — WORK COMPLETED THIS SESSION (Task ID: 1 — main agent)
+    54→
+    55→## Work Log:
+    56→- Extracted user's TAR (42MB, full git repo of CryptoEarn Agent v0.3.0)
+    57→- Read README, worklog, CI workflow, prisma schema (13 models), package.json
+    58→- Deployed the full system into /home/z/my-project: src/, prisma/, scripts/,
+    59→  .github/workflows/agent-ci.yml, public assets, data/, docs/
+    60→- **Fixed critical Next.js 16.1.3 incompatibility**: the old `src/middleware.ts`
+    61→  convention is DEPRECATED and SILENTLY BROKE all /api routes (responses came
+    62→  back empty, size 0). Converted to `src/proxy.ts` with `export default
+    63→  function proxy()` — all 25 API routes now return real JSON.
+    64→- Renamed project package to cryptoearn-agent v0.4.0, added agent scripts
+    65→  (agent:health, agent:cycle, agent:simulate, db:push:prod, etc.)
+    66→- Installed @types/diff; pushed Prisma schema to SQLite; seeded DB via
+    67→  bootstrap; ran first discovery cycle (124 opportunities, 1 approval pending)
+    68→- **Dashboard v2 redesign** (user: "i am not satisfied with the dashboard"):
+    69→  - VLM-audited old design: navigation overload (13 tabs in a row), 3 headers
+    70→    smashed into 1, raw dev metrics on overview, floating glitch stats bar,
+    71→    empty flatline charts, generic black hacker aesthetic
+    72→  - New design system: graphite-green dark theme (not pure black), warm paper
+    73→    light theme, emerald accent, layered surfaces, radius 0.75rem
+    74→  - New app shell (src/components/dashboard/shell/):
+    75→    - sidebar.tsx — grouped nav (Monitor/Earn/Analyze/System + Tools),
+    76→      health card (budget pill + cycle count), desktop rail 232px + mobile
+    77→      slide-over drawer for chat-side-panel use
+    78→    - topbar.tsx — ONE compact bar: page title, status pill, autonomy select,
+    79→      Run/Pause/Emergency, notification bell w/ unread badge, keyboard help
+    80→    - terminal-drawer.tsx — docked bottom drawer (replaces floating panel +
+    81→      two FABs), expandable, Esc-to-close
+    82→  - Rewrote tabs-overview.tsx as **Daily Briefing**: time-aware greeting,
+    83→    "since last visit" delta, consolidated Action Center (replaces 3 stacked
+    84→    banners), 4 hero KPIs with zero-state CTAs, clickable pipeline funnel,
+    85→    Top Picks by risk-adjusted hourly, live activity feed
+    86→  - page-client.tsx rewire: all 13 tabs preserved, keyboard shortcuts,
+    87→    command palette, onboarding tour, opportunity sheet, notifications,
+    88→    focus mode, public view — all functional in the new shell
+    89→  - footer.tsx simplified (budget moved to sidebar health card)
+    90→- Verified end-to-end with agent-browser: page renders, sidebar drawer works
+    91→  at 480px (side-panel width), drawer navigation, terminal command execution
+    92→  (echo test → output confirmed), Opportunities table, Daily Report,
+    93→  light/dark themes, no console errors, lint passes
+    94→
+    95→## Stage Summary:
+    96→- System: deployed, running, agent cycle verified (124 opportunities)
+    97→- Critical fix: middleware.ts → proxy.ts (Next 16 requirement)
+    98→- Dashboard: v2 shipped — sidebar shell + Daily Briefing + terminal drawer
+    99→- VLM design review: visual 8/10, information architecture 9/10 (was ~4/10)
+   100→- All lint clean, all APIs 200, no runtime errors
+   101→
+   102→---
+   103→
+   104→# PART 3 — OPERATOR'S DAILY CHECK-IN GUIDE (how the user uses this)
+   105→
+   106→1. **Open the dashboard** (chat side panel or browser). Land on Daily Briefing.
+   107→2. **Read Action Center first** — approvals pending / agent idle / stuck items
+   108→   appear there with one-click jump buttons.
+   109→3. **Daily Report tab** — type a prompt, hit Generate for AI status report.
+   110→4. **Terminal** (sidebar Tools or Ctrl+Shift+T):
+   111→   `echo 'GITHUB_TOKEN=THE_TOKEN' >> .env` then verify with Set Token button.
+   112→5. **GitHub Actions**: repo Settings → Secrets → Actions: DATABASE_URL
+   113→   (Neon Postgres free tier), GH_PAT, LLM keys. The agent-ci.yml runs every
+   114→   4h: lint, typecheck, tests, mock simulation, then the real cycle.
+   115→6. **First earning path**: pick a low-risk bounty on Top Picks → approve it →
+   116→   autonomy "assist" → agent submits PR via GH_PAT → PR monitor transitions
+   117→   submitted → awaiting_payment → paid (verified on-chain on Wallets tab).
+   118→
+   119→---
+   120→
+   121→# PART 4 — UNRESOLVED / NEXT PHASE PRIORITIES
+   122→
+   123→1. **[HIGH] Real PR submission end-to-end** — needs the user's GITHUB_TOKEN +
+   124→   repo secrets; then approve one queued bounty and watch the PR adapter fire.
+   125→2. **[HIGH] Daily Report AI generation** — the /api/memory daily_report
+   126→   category exists; ensure the report endpoint uses Z.AI SDK server-side.
+   127→3. **[MED] Restyle remaining 12 tabs** to v2 primitives (they render in the
+   128→   new shell already; styling is legacy in places — especially Approvals,
+   129→   which is the most-used tab).
+   130→4. **[MED] Zero-state charts** — Opportunities/Ledger charts still show
+   131→   flatline $0 charts; add designed empty states with CTAs.
+   132→5. **[LOW] Consolidate NotificationPermissionBanner remnants** — the banner
+   133→   component is imported but now hidden; verify it never double-renders.
+   134→6. **[LOW] The FloatingStatsBar was removed from the shell** — intentionally
+   135→   (VLM called it a glitch); its budget/cycle info lives in sidebar health.
+   136→7. Push v0.4.0 to the GitHub repo (user adds token first).
+   137→
+   138→---
+   139→
+   140→# PART 5 — ROUND 2 (Task ID: 2 — webDevReview cron, 2026-09-04)
+   141→
+   142→## Current project status / assessment
+   143→- Dashboard v2 shell (sidebar + topbar + Daily Briefing + terminal drawer) is STABLE:
+   144→  all 13 tabs render, 0 console errors, 0 page errors, lint clean.
+   145→- **Daily Report AI generation VERIFIED WORKING** (worklog priority #2 resolved):
+   146→  it already uses the backend pipeline, produces real reports with system state,
+   147→  pending approvals, health check, recommendations. Persisted to AgentMemory.
+   148→- Agent state: 2 cycles run, 130 opportunities, 2 pending approvals (real data
+   149→  flowing from my test cycle — 6 new discovered).
+   150→- Dev server note: crashed once mid-hot-reload during this session's edits;
+   151→  restarted, healthy. If `curl localhost:3000` returns 000, restart via
+   152→  `(nohup bun run dev > /dev/null 2>&1 &)` in /home/z/my-project.
+   153→
+   154→## Goals / completed modifications / verification (this round)
+   155→1. **BUG FIX — Run Cycle dead-end**: topbar "Run Cycle" was disabled when the
+   156→   background loop wasn't "running" (canRun gate), but the run-cycle API works
+   157→   in one-shot mode regardless (this is exactly how GitHub Actions calls it).
+   158→   Fixed: button now only disabled while pending or when kill switch is
+   159→   engaged. Verified: button enabled while agent IDLE.
+   160→2. **Approvals tab restyle (VLM 8.5/10)**:
+   161→   - 8 equal-weight action buttons → grouped: Approve (solid) / Improve /
+   162→     Reject (red) + kebab "More actions" dropdown (Request changes, Rework,
+   163→     Ask agent, Abandon, Pause) with per-item hints. Same Phase-3 §36
+   164→     decisions, same feedback dialog flow — verified by opening the dropdown.
+   165→   - Heavy amber box → elevated card (rounded-xl, card bg, subtle shadow) +
+   166→     3px amber left-edge accent for "awaiting decision".
+   167→   - Muted metadata badges (L-level, age at 70% opacity); risk badge stays
+   168→     prominent.
+   169→   - DetailBlock: quieter surface (muted/20) + new DetailPlaceholder component
+   170→     (dashed border + ghost icon + guiding copy) for null-task states.
+   171→3. **Wallets tab restyle (VLM 9/10)**:
+   172→   - Grid gap 4→5, card hover lift, chain icon padded to lg.
+   173→   - Copy/explorer icons muted (60% opacity) until hover.
+   174→   - Balance boxes: muted/30 surface, uppercase tracking labels.
+   175→   - "Fetched" divider row with border-t.
+   176→   - Transactions empty state: icon + explanatory copy ("bounty payments will
+   177→     appear here once the agent completes work") instead of bare text.
+   178→   - Wallets-empty state: dashed card with config guidance.
+   179→4. **Daily Report compact health summary**: raw health stdout (which dumped a
+   180→   37-env-var blob on one line) → "N passed · N warnings · N failures" tally
+   181→   + failures (top 5) + warnings (top 3) with name-only labels; the
+   182→   "Optional: KEY, KEY, ..." enumeration collapses to "N optional keys not
+   183→   set (e.g. FIRST)". Excludes aggregate Summary lines. Verified live: report
+   184→   now shows "16 passed · 2 warnings · 0 failures" style lines.
+   185→
+   186→## Verification results
+   187→- agent-browser full walk: all tabs error-free; Approvals dropdown opens with
+   188→  all 5 secondary actions; Wallets empty states render; Daily Report generates
+   189→  compact output; briefing + terminal unaffected (GITHUB_TOKEN workflow safe).
+   190→- `bun run lint`: clean. All APIs 200.
+   191→
+   192→## Unresolved issues / risks + next-phase priorities
+   193→1. **[HIGH] Real PR submission end-to-end** — still blocked on operator adding
+   194→   GITHUB_TOKEN (terminal: `echo 'GITHUB_TOKEN=...' >> .env`) + repo secrets.
+   195→   With 2 pending approvals queued, this is the single unlock for first real
+   196→   earnings.
+   197→2. **[MED] Remaining legacy-styled tabs**: Opportunities, Tasks, Events,
+   198→   Strategies, Memory, Model Routing, Ledger still use pre-v2 styling inside
+   199→   the v2 shell (consistent but denser). Apply same treatment (action
+   200→   grouping, muted metadata, designed empty states) next round.
+   201→3. **[MED] Approvals expanded card is tall** (VLM nitpick): consider
+   202→   collapsible detail sections or 2-column compact layout for requirements.
+   203→4. **[LOW] bitcoin wallet 429 rate-limit warning** — transient blockchain.info
+   204→   rate limit during my test cycle; retry logic already exists; monitor.
+   205→5. **[LOW] Push v0.4.x to GitHub** once token added; CI workflow ready.
+   206→
+   207→---
+   208→
+   209→# PART 6 — ROUND 3 (Task ID: 3 — webDevReview cron, 2026-09-04, 11:00–12:30 UTC)
+   210→
+   211→## Current project status / assessment
+   212→- Started with a full agent-browser + VLM audit of all 13 tabs. Scores:
+   213→  Overview 10, Opportunities **3/10** (raw 11-column table — the worst tab),
+   214→  Events **6/10** (wall-of-text log), Model Routing **7/10** (flat provider
+   215→  cards, "Not Configured" noise), Ledger **7/10** (rainbow chart, bare
+   216→  flatline text empty state), Strategies 8 (rainbow bars + loud amber card),
+   217→  Memory 9, Tasks 8, Pipeline 9, Approvals 8.5.
+   218→- Dev server healthy, agent idle, 130 opportunities / 2 cycles in DB.
+   219→
+   220→## Goals / completed modifications / verification (this round)
+   221→1. **Opportunities tab v2 (3/10 → VLM 9/10)** — full rewrite of
+   222→   tabs-opportunities.tsx: raw table → responsive card-list rows (title +
+   223→   emerald reward + muted pills + risk/verify meters, mobile-safe stacking);
+   224→   quick status chips with live counts (shares the Daily Briefing's
+   225→   `["opportunities","briefing"]` query cache — zero extra network calls);
+   226→   active-filter chips + Clear all; stat strip (shown / active / avg reward /
+   227→   avg risk); designed empty state with CTAs; `/` keyboard shortcut focuses
+   228→   search; Export CSV kept.
+   229→2. **Event Log tab v2 (6/10 → VLM 9/10)** — day separators (Today / Yesterday
+   230→   / date, sticky); severity now drives color (left accent border + level
+   231→   dot + level tag); agent demoted to quiet mono text (removes the
+   232→   arbitrary-color pills); severity quick-chips (all/info/warn/errors/
+   233→   critical/debug); Go Live/SSE, payload expansion and CSV export kept.
+   234→3. **Ledger tab v2 (7/10 → VLM 9/10)** — totals cards → v2 primitives
+   235→   (uppercase labels, accent icons, number-tick); strategy chart → emerald
+   236→   monochrome scale (replaces rainbow), rounded bars, richer tooltip
+   237→   (net/gross/count); designed empty states for chart + Verified + Expected
+   238→   sections (ghost icon + guiding copy); ledger rows get status accent
+   239→   borders and hover.
+   240→4. **Model Routing polish (7/10 → VLM 9/10)** — ProviderHealthCard: hover
+   241→   lift; unconfigured providers de-emphasize (dashed border, 70% opacity,
+   242→   "no key" pill) so configured ones pop; "no check" noise → "—" with
+   243→   tooltip; removed unused AlertTriangle import.
+   244→5. **Strategies color consistency (8 → 9)** — BAR_COLORS → emerald
+   245→   monochrome scale; PolicyPill softened (bg/10, rounded-lg, mono numerals).
+   246→6. **Memory polish (9 maintained)** — empty-state brain icon gets emerald
+   247→   tint; "Total Memories" accent blue → teal (quieter).
+   248→7. **Tasks polish** — row padding py-2 → py-2.5, row borders, objective
+   249→   truncation gets title tooltip.
+   250→8. **Approvals collapsible detail sections (Round-2 VLM nitpick → VLM 9/10)**
+   251→   — DetailBlock converted to Collapsible; decision-critical sections
+   252→   (Opportunity requirements, Agent's latest iteration, Models + reviewer
+   253→   feedback w/ risk/EV) open by default; Quality gate + Iteration history
+   254→   collapse to one title row. Chevron + aria-expanded + hover state.
+   255→9. **2 PRE-EXISTING RUNTIME BUGS FIXED in OpportunityDetailSheet** (found via
+   256→   agent-browser clicking a card — the sheet was crashing before this round):
+   257→   - `Cannot read properties of undefined (reading 'estimated_usd')`: the
+   258→     DETAIL endpoint (`/api/opportunities/:id`) returns a FLAT reward shape
+   259→     (`rewardUsd`) while the sheet assumed the LIST endpoint's nested
+   260→     `reward.estimated_usd`. Fix: shape-tolerant accessor (backend untouched).
+   261→   - `op.requirements.map is not a function`: the detail endpoint returns
+   262→     Prisma scalar columns as JSON-encoded STRINGS (`"[\"a\",\"b\"]"`).
+   263→     Fix: local `parseStringArray` normalizer for requirements +
+   264→     skillsRequired (same defensive approach tabs-approvals already used).
+   265→   Verified: sheet now renders Reward/Est-hours metrics, requirements list
+   266→   ("Open a PR linked to this issue") and skills badges.
+   267→
+   268→## Verification results
+   269→- agent-browser full walk of all 13 tabs: 0 page errors, 0 console errors
+   270→  (only HMR logs), lint clean.
+   271→- Terminal GITHUB_TOKEN workflow VERIFIED END-TO-END: opened drawer (sidebar
+   272→  Tools button), submitted `echo terminal-ok` → write-confirmation safety
+   273→  dialog appeared (echo is write-class, as designed for the token workflow)
+   274→  → clicked Execute → output `terminal-ok` rendered. Operator token path is
+   275→  safe. NOTE for operator: Ctrl+Shift+T is intercepted by Chrome
+   276→  (reopen-tab) in a real browser — use the sidebar Tools > Terminal button
+   277→  or the command palette instead.
+   278→- 480px side-panel (chat panel width) check on Opportunities: VLM 9/10,
+   279→  cards stack cleanly, chips scroll, no horizontal overflow.
+   280→- Overview regression check after all edits: VLM 10/10 — no regression.
+   281→
+   282→## Unresolved issues / risks + next-phase priorities
+   283→1. **[HIGH] Real PR submission end-to-end** — still blocked on operator's
+   284→   GITHUB_TOKEN (terminal) + repo secrets. 2 approvals pending. Single
+   285→   unlock for first real earnings. Terminal path re-verified this round.
+   286→2. **[MED] Push v0.4.x to GitHub** — the tarball/repo needs the v2 design +
+   287→   bug fixes committed; CI workflow (agent-ci.yml) is ready and will run
+   288→   lint/typecheck/tests/cycle on Actions.
+   289→3. **[MED] Detail-endpoint shape normalization (server-side)** — the client
+   290→   now tolerates flat reward + string-array columns, but a future refactor
+   291→   could normalize the detail endpoint to the documented Opportunity type
+   292→   (parse JSON columns once, server-side). Client fixes are defensive only.
+   293→4. **[LOW] Opportunities risk/verify meters read as subtle at low values**
+   294→   (honest data: avg risk ≈ 2/100) — bars are correct, just short. Consider
+   295→   a numeric badge on mobile only (already present) if operators ask.
+   296→5. **[LOW] Task-iteration "Failed" status pill contrast** in dark mode is
+   297→   muted by design (bg-red-500/15); revisit only if operator reports
+   298→   difficulty spotting failures.
+   299→
+   300→---
+   301→
+   302→# PART 7 — ROUND 4 (Task ID: 4 — webDevReview cron, 2026-09-04, ~19:00–20:00 UTC)
+   303→
+   304→## Current project status / assessment
+   305→- Started with a full QA sweep: dev server healthy, all main APIs 200
+   306→  (agent/status, analytics, approvals, events, ledger, memory, models,
+   307→  opportunities, strategies, tasks, wallet, export). Stale daemon error buffer
+   308→  from pre-Round-3 bugs produced 4 phantom "page errors" — verified as stale
+   309→  by a full browser restart (fresh session → 0 errors).
+   310→- Found 2 REAL bugs + 1 design flaw during QA (details below). All fixed.
+   311→- 4 cycles now in DB, 132 opportunities, 1 pending approval.
+   312→
+   313→## Goals / completed modifications / verification (this round)
+   314→
+   315→### BUG FIXES
+   316→1. **Daily Briefing Top Picks showed "$0.00" rewards** (all 4 picks): the list
+   317→   API returns the canonical NESTED reward shape (`reward.estimated_usd`) but
+   318→   tabs-overview.tsx read the FLAT `rewardUsd` → undefined → $0.00. Fixed to
+   319→   `opp.reward.estimated_usd`. Verified live: picks now show $50.00 / $1.00.
+   320→2. **[Round-3 priority #3] Detail-endpoint shape normalization (server-side)**:
+   321→   created shared serializer `src/lib/agent/serialize.ts`
+   322→   (`serializeOpportunity` + `safeParseStringArray`). The LIST route now
+   323→   imports it (deleted its local copy); the DETAIL route GET now emits the
+   324→   same canonical shape (nested reward + parsed arrays + relations kept).
+   325→   Sheet's defensive accessors kept as defense-in-depth. Verified: detail
+   326→   returns reward{50}, requirements as list, tasks present; sheet renders
+   327→   $50.00 + "Open a PR linked to this issue" + skills.
+   328→3. **Onboarding tour was showing STALE v1 content** ("11 tabs strip",
+   329→   "Overview tab", footer) in the v2 sidebar shell — exactly the overlay that
+   330→   blocked the previous session. Rewrote all steps for v2 (Briefing + Action
+   331→   Center, sidebar groups, Approvals/autonomy unlock, terminal token
+   332→   workflow), added Esc-to-dismiss + "click anywhere to leave" hint +
+   333→   role=dialog/aria-modal. Verified: auto-shows once, Esc dismisses +
+   334→   persists to localStorage, Restart-tour path intact.
+   335→   NOTE for operator: `agent-browser find text "X" click` mis-clicks nav
+   336→   (text finder matches other elements) — use snapshot refs for nav clicks.
+   337→4. **480px side-panel horizontal overflow (313px!)**: the Top Picks +
+   338→   Activity grid (`grid gap-4 lg:grid-cols-2`) has implicit auto columns and
+   339→   grid items default to `min-width:auto` — the truncated nowrap titles'
+   340→   min-content forced the card to ~781px, blowing out the document (this is
+   341→   what made the funnel "overflow" and pushed content under the FAB).
+   342→   Fixed: `min-w-0` on the grid + both cards + card contents + headers (+
+   343→   watchlist card), explicit `grid-cols-1`. Verified: 0px overflow on ALL
+   344→   12 tabs at 480px AND 1280px; VLM 9/10 (was 5/10).
+   345→5. **Mobile FAB obscured the funnel legend**: shrank 56→48px (icon 6→5),
+   346→   briefing root now `pb-24 md:pb-6` so content can scroll clear. VLM
+   347→   confirms fixed.
+   348→6. **Action Center low contrast** (VLM desktop nit): added 3px amber
+   349→   left-edge accent + slightly stronger border/gradient in `.action-strip`.
+   350→
+   351→### NEW FEATURE 1 — Opportunity Watchlist (operator's daily check-in)
+   352→Full stack, pure UI state (never influences agent scoring):
+   353→- Prisma: `Opportunity.watched Boolean @default(false)` + `watchedAt` —
+   354→  pushed to SQLite (additive, no data loss; **dev server needed restart to
+   355→  pick up the regenerated Prisma client** — if you see `Unknown argument
+   356→  'watched'`, restart `bun run dev`).
+   357→- API: PATCH /api/opportunities/[id] accepts `{watched:boolean}` (logs
+   358→  opportunity_watch_added/removed events for the audit feed); list endpoint
+   359→  supports `?watched=true|false` + `sort=watched`.
+   360→- UI: `watch-star.tsx` (WatchStar button + useToggleWatch hook with OPTIMISTIC
+   361→  cache patching across all ["opportunities"] caches + rollback on error);
+   362→  stars on Opportunities cards, Briefing Top Picks rows, detail-sheet header;
+   363→  amber "★ Watchlist N" filter chip on Opportunities (server-side filter,
+   364→  verified "1 shown of 132"); "Your Watchlist" briefing card (amber accent,
+   365→  renders only when non-empty, max 5 + overflow note).
+   366→- Verified end-to-end via agent-browser: star/unstar syncs across briefing
+   367→  section, Top Picks, cards, chip count, API, and back.
+   368→
+   369→### NEW FEATURE 2 — Terminal GITHUB_TOKEN helper (the earning unlock)
+   370→- GET /api/terminal now returns `tokenStatus` {githubTokenSet,
+   371→  operatorTokenSet} — PRESENCE ONLY (values never leave the server).
+   372→- Terminal header: amber "GITHUB_TOKEN not set" chip → click pre-fills
+   373→  `echo 'GITHUB_TOKEN=YOUR_TOKEN_HERE' >> .env` (operator pastes token,
+   374→  Enter, write-confirm dialog); emerald "GITHUB_TOKEN set" chip when present.
+   375→- First-run guidance card in the empty terminal state; chip auto-refreshes
+   376→  after any `echo … .env` command + on drawer re-open. VLM 8.5/10 at 480px.
+   377→- Verified the FULL loop incl. write-confirmation + Execute; **test token
+   378→  line was then REMOVED from .env** (only DATABASE_URL remains — the
+   379→  operator's real token path is clean).
+   380→
+   381→## Verification results
+   382→- agent-browser: all 12 tabs switch + render with **0 page errors, 0 console
+   383→  errors** at BOTH 1280px and 480px; 0px horizontal overflow everywhere.
+   384→- `bun run lint` clean after every change batch.
+   385→- Terminal GITHUB_TOKEN workflow re-verified end-to-end (safe + enhanced).
+   386→- Dev.log clean (only prisma query traces).
+   387→
+   388→## Unresolved issues / risks + next-phase priorities
+   389→1. **[HIGH] Real PR submission end-to-end** — still THE unlock (operator:
+   390→   click the amber chip in the terminal, paste token, Enter). 1 approval
+   391→   pending. Nothing left to build on this path.
+   392→2. **[MED] Push v0.4.1 to GitHub** — includes schema change (watched cols);
+   393→   run `bun run db:push` after pulling. CI workflow ready.
+   394→3. **[LOW] `/api/opportunities/recent` still returns flat shape** — no UI
+   395→   consumers today (api client method exists); normalize it via
+   396→   serializeOpportunity when next touched.
+   397→4. **[LOW] Watchlist filter state isn't deep-linkable** (no initialWatch
+   398→   param like initialStatus) — add if operators ask for it.
+   399→5. **[LOW] Success Rate KPI reads empty until first attempt** (honest
+   400→   zero-state, by design).
+   401→
+   402→---
+   403→
+   404→# PART 8 — ROUND 5 (Task ID: 5 — webDevReview cron, 2026-09-04, ~20:10–20:50 UTC)
+   405→
+   406→## Current project status / assessment
+   407→- Opened with a full QA sweep: dev server healthy, all APIs 200, agent IDLE,
+   408→  132 opportunities / 4 cycles in DB. All 13 tabs rendered with 0 console /
+   409→  page errors at both 1280px and 480px.
+   410→- Found 1 REAL bug + 2 design debts + 1 API bug during QA:
+   411→  1. Architecture tab was UNREACHABLE from the sidebar (only command palette
+   412→     / keyboard "-"), because it was missing from NAV_GROUPS.
+   413→  2. Pipeline (Lifecycle) tab VLM 7.5/10 — plain stage headers, tiny
+   414→     low-contrast avg/max text, flat nodes, FAB overlap on mobile.
+   415→  3. Mobile FAB bottom-padding was only applied to the briefing tab — all
+   416→     other 12 tabs could have content obscured by the FAB.
+   417→  4. `?sort=deadline` returned NULL-deADLINE rows FIRST (nulls-first on
+   418→     SQLite) — urgent rows drowned.
+   419→- DB check: 44 of 132 opportunities carry deadlines (14 future, 30 overdue
+   420→  + active) → deadline-urgency feature had real data to work with.
+   421→
+   422→## Goals / completed modifications / verification (this round)
+   423→
+   424→### BUG FIXES
+   425→1. **Architecture sidebar nav** — added to System group (Network icon,
+   426→   after Model Routing). Verified clickable at 1280px AND via the 480px
+   427→   mobile drawer (heading switches to "Architecture").
+   428→2. **Global mobile FAB padding** — moved `pb-24 md:pb-5` from the briefing
+   429→   root to the shared `<main>` wrapper in page-client.tsx (removed the
+   430→   per-tab hack). All 13 tabs now scroll clear of the mobile FAB.
+   431→3. **sort=deadline nulls-first fix** — Prisma supports `{ nulls: "last" }`
+   432→   on SQLite (verified via direct query test); applied to both `deadline`
+   433→   and `watchedAt` sorts. Verified live: soonest deadlines now come first.
+   434→4. **`/api/opportunities/recent` normalized** (Round-4 priority #3) — now
+   435→   returns the canonical shape via serializeOpportunity (nested reward,
+   436→   parsed string arrays, watched fields). Verified: `reward.estimated_usd`,
+   437→   `requirements` as real array. No UI consumers existed (api client method
+   438→   only), so the change is safe.
+   439→
+   440→### NEW FEATURE — Deadline urgency (the operator's time-pressure triage)
+   441→Full stack, zero extra network calls on the briefing (derives from the
+   442→existing 500-row opportunities cache):
+   443→- **Shared helpers** `src/components/dashboard/lib/deadline.ts`:
+   444→  `daysUntil`, `deadlineUrgency` (red ≤3d + overdue / amber ≤7d / muted
+   445→  beyond, with `level` + row `ringClass`), `DEADLINE_ACTIVE_STATUSES`.
+   446→- **API**: `?deadlineWithin=<days>` filter on GET /api/opportunities
+   447→  (deadline not-null + ≤ now+N days, deadline ASC). Verified: 38 rows
+   448→  within 365d, correct ordering. API client method updated.
+   449→- **Daily Briefing "Closing Soon" section** (below Watchlist): top-4
+   450→  nearest future deadlines among ACTIVE statuses, urgency pills, red card
+   451→  accent when ≤3d, "N past deadline" count in the subtitle (30 currently),
+   452→  WatchStar on each row. Renders only when deadline data exists.
+   453→  VLM 9/10 — "clean, professional, highly functional; scannability of the
+   454→  deadlines is the standout feature".
+   455→- **Opportunities card deadline pills**: plain relative-time text →
+   456→  urgency-colored pills ("5d left" amber / "23d passed" red) with exact
+   457→  deadline in tooltip. VLM: layout 9/10, contrast 9/10.
+   458→- **⏰ "Closing soon" chip** in the Opportunities chip row (red, count =
+   459→  active + deadline ≤7d incl. overdue; currently 32): client-side filter
+   460→  + removable active-filter chip + Clear-all integration.
+   461→
+   462→### PIPELINE TAB V2 RESTYLE (VLM 7.5 → 9/10)
+   463→- Stage headers: emerald dot + bolder uppercase tracking + separator
+   464→  border under the header; hint text hidden on mobile (was wrapping).
+   465→- Status nodes: hover lift (`-translate-y-0.5` + emerald border + shadow),
+   466→  avg/max metrics now rounded muted pills (was 9px bare text), zero counts
+   467→  grayed at 40% opacity (VLM nitpick fix), shadow-sm base.
+   468→- Stuck rings + spin + all interactions (click-to-filter, true-average
+   469→  toggle, 7d trend chart, legend) unchanged.
+   470→
+   471→## Verification results
+   472→- agent-browser: all 13 tabs × 2 viewports (1280/480) — **0 console errors,
+   473→  0 page errors, 0px horizontal overflow**. Mobile drawer nav verified for
+   474→  Architecture + Pipeline.
+   475→- Terminal GITHUB_TOKEN workflow re-verified END-TO-END: sidebar Tools →
+   476→  terminal → `echo terminal-r5-ok` → write-confirmation safety dialog →
+   477→  Execute (ref click) → output rendered. (NOTE: `find text "Execute" click`
+   478→  mis-targets; use snapshot refs for dialog buttons.)
+   479→- `bun run lint` clean after every batch. All APIs 200 (wallet endpoints
+   480→  are /api/wallet/balances + /api/wallet/transactions).
+   481→- dev.log clean (only prisma query traces).
+   482→
+   483→## Unresolved issues / risks + next-phase priorities
+   484→1. **[HIGH] Real PR submission end-to-end** — STILL THE unlock. Operator:
+   485→   open Terminal (sidebar Tools), click the amber GITHUB_TOKEN chip, paste
+   486→   token, Enter → confirm. 1 approval pending. Nothing left to build.
+   487→2. **[MED] Push v0.4.2 to GitHub** — includes deadline helpers + API
+   488→   changes (deadlineWithin, recent serialization). CI workflow ready.
+   489→3. **[LOW] Closing Soon "past deadline" items are counted, not listed** —
+   490→   listing all 30 overdue rows would bloat the briefing; the ⏰ chip on
+   491→   Opportunities covers deep triage. Consider an "overdue" sub-list only
+   492→   if the operator asks.
+   493→4. **[LOW] Lifecycle trend chart legend colors** — status rainbow is
+   494→   intentional (matches status semantics across the app); VLM suggested a
+   495→   key consolidation, cosmetic only.
+   496→5. **[LOW] Watchlist + closing-soon filter states aren't deep-linkable**
+   497→   (no URL params) — same as Round-4 note, add if operators ask.
+   498→
+   499→---
+   500→
+   501→# PART 9 — ROUND 6 (Task ID: 6 — webDevReview cron, 2026-09-04, ~20:55–21:40 UTC)
+   502→
+   503→## Current project status / assessment
+   504→- Opened with QA: dev server healthy, all 13 tabs walk clean, APIs 200.
+   505→- VLM flagged Daily Report tab at **6.5/10** (weakest remaining tab: flat
+   506→  input, no focus ring, bare text empty state, dead zone) and the
+   507→  opportunity detail sheet lacked a deadline urgency pill.
+   508→- **CRITICAL QA DISCOVERY**: `window.__consoleErrors` (used in ALL prior
+   509→  rounds' "0 console errors" checks) was NEVER instrumented in this app —
+   510→  it always fell back to `[]`. Switched to agent-browser's REAL console/
+   511→  errors commands, which immediately revealed:
+   512→  1. **4 hydration errors**: TopPicks rows rendered a `<WatchStar>` button
+   513→     NESTED inside a `<button>` (invalid HTML, present since Round 4).
+   514→  2. **Daily Report persistence silently broken since Round 2**: POST
+   515→     /api/memory returned 400 ("title, body, and agent are required") —
+   516→     the component never sent the required `agent` field, and the fetch
+   517→     wasn't res.ok-checked, so reports rendered once and VANISHED on
+   518→     reload. The Round-2 "verified working" note covered generation, not
+   519→     persistence.
+   520→
+   521→## Goals / completed modifications / verification (this round)
+   522→
+   523→### BUG FIXES
+   524→1. **TopPicks nested-button hydration fix** — outer row converted from
+   525→   `<button>` to `<div role="button" tabIndex={0}>` with keyboard Enter/
+   526→   Space handling + focus-visible ring (same pattern as Opportunities
+   527→   cards). WatchStar is now valid HTML. Verified: 0 console errors, 0
+   528→   page errors after full reload (was 4 [error] lines).
+   529→2. **Daily Report persistence fix** — POST /api/memory now sends
+   530→   `agent: "operator-briefing"` + real `tags` array (was a JSON string,
+   531→   which recordMemory silently dropped); non-OK responses logged. Verified:
+   532→   POST 200, report appears under `?category=daily_report`, **survives
+   533→   page reload** (previously vanished every refresh).
+   534→
+   535→### NEW FEATURE — Action Center deadline triage (v0.4.3)
+   536→- Briefing Action Center now leads with an urgent-deadline strip
+   537→  ("30 opportunities with a deadline inside 3 days — act or skip" →
+   538→  Triage CTA), ranked ABOVE approvals.
+   539→- Full navigation chain: Action Center Triage → handleNavigate gains
+   540→  `{closingSoon}` option → page-client `pendingClosingSoon` state →
+   541→  OpportunitiesTab new `initialClosingSoon` prop (sentinel-guarded so it
+   542→  applies once per navigation and doesn't re-activate after the operator
+   543→  clears it). Verified: Triage click lands on Opportunities with the ⏰
+   544→  closing-soon chip active (aria-selected) + removable ⏰ filter chip,
+   545→  32 rows.
+   546→- Top Picks "due in X" plain text → urgency pills (same red/amber/muted
+   547→  ladder as everywhere else).
+   548→
+   549→### DAILY REPORT TAB V2 RESTYLE (VLM 6.5 → 8.5/10)
+   550→- Prompt input: distinct muted surface + **emerald focus-within ring +
+   551→  border + background transition**; placeholder contrast raised.
+   552→- **One-tap quick prompts** (Sparkles icon + 3 chips: "What should I do
+   553→  today?" / "Any risks or blockers?" / "How is the pipeline?") — each
+   554→  runs the full generation immediately (title tooltip shows the exact
+   555→  prompt). Verified end-to-end: click → health check (2.6s) → report
+   556→  rendered + persisted.
+   557→- Empty state: dashed emerald circle + FileText icon + guidance copy
+   558→  ("Tap a quick prompt above...") replacing the bare gray line.
+   559→- Consistent rounded-lg on input container, Generate button, list.
+   560→
+   561→### DETAIL SHEET DEADLINE PILL (v0.4.3)
+   562→- Header badge row now shows the urgency badge ("30d left" + Clock icon,
+   563→  red ≤3d / amber ≤7d / muted beyond) with exact-deadline tooltip,
+   564→  matching briefing + cards + chips. VLM-verified.
+   565→
+   566→## Verification results
+   567→- **Real** agent-browser console/error tracking (not the blind
+   568→  window.__consoleErrors): all 13 tabs × 2 viewports (1280/480) —
+   569→  0 console errors, 0 page errors, 0px horizontal overflow.
+   570→- Daily Report: quick-prompt click → terminal health POST 200 (2.6s) →
+   571→  memory POST **200** → report card renders → reload → report persists.
+   572→- Action Center Triage → Opportunities closing-soon filter: verified
+   573→  active chip + 32 filtered rows.
+   574→- Terminal GITHUB_TOKEN workflow re-verified END-TO-END (write-confirm
+   575→  dialog → Execute ref-click → output rendered). Operator path safe.
+   576→- `bun run lint` clean after every batch; dev.log clean.
+   577→
+   578→## Unresolved issues / risks + next-phase priorities
+   579→1. **[HIGH] Real PR submission end-to-end** — operator-blocked (token via
+   580→   terminal chip). 1 approval pending. All UI paths ready.
+   581→2. **[MED] Push v0.4.3 to GitHub** — now includes the persistence fix
+   582→   (reports survive reload — a data-loss-class fix worth shipping).
+   583→3. **[MED] Prior "0 console errors" verifications are retroactively
+   584→   untrusted** — Rounds 2–5 used the blind check. This round re-verified
+   585→   everything with real tracking and fixed what it found (both bugs
+   586→   above). Future rounds: ALWAYS use `agent-browser console` / `errors`.
+   587→4. **[LOW] VLM nit: quick-prompt chips wrap unevenly at ~1200px** —
+   588→   cosmetic; consider min-width or 2-col layout on narrow screens.
+   589→5. **[LOW] Daily Report same-day reports overwrite** (recordMemory
+   590→   upserts by title+category) — one persisted report per calendar day;
+   591→   acceptable for daily briefings, note if operators want history.
+   592→
+   593→---
+   594→
+   595→# PART 10 — ROUND 7 (Task ID: 7 — webDevReview cron, 2026-09-04, ~21:45–22:25 UTC)
+   596→
+   597→## Current project status / assessment
+   598→- QA baseline (REAL console tracking per Round-6 protocol): all 13 tabs
+   599→  0 errors / 0 page errors. Public dashboard (?view=public) also clean.
+   600→- VLM comparative audit of the three remaining suspect tabs: Strategies
+   601→  9/10, Event Log 8/10, **Tasks 6/10 — the weakest tab left** (raw dense
+   602→  9-column table, aggressive ellipsis truncation, no card polish).
+   603→- Public dashboard VLM: polish 9/10, but absolute timestamps
+   604→  ("9/4/2026, 11:24:51 AM") felt static for a "live" view.
+   605→
+   606→## Goals / completed modifications / verification (this round)
+   607→
+   608→### TASKS TAB V2 (VLM 6 → 8/10 desktop, 8/10 mobile)
+   609→Full display rewrite of tabs-tasks.tsx (queries/filters/SSE/dialog kept):
+   610→- **Card rows replace the 9-column table** (TaskRow component): objective
+   611→  title (100-char truncation + full title tooltip), metadata pill line
+   612→  (status badge + from→to agent badges with arrow + risk pill + model in
+   613→  mono), right block (tokens with Gauge icon / latency / quality-score
+   614→  colored ≥80% emerald else amber / relative time with Clock icon).
+   615→- Failed tasks get a subtle red border accent (border-red-500/25).
+   616→- Keyboard accessible: div[role=button] + Enter/Space + focus ring;
+   617→  hover lift + title hover color (same primitives as Opportunities cards).
+   618→- **Status tally chip strip** (v0.4.4): success/failed/running/pending/
+   619→  skipped/cancelled counts as clickable chips that toggle the status
+   620→  filter (aria-pressed) + "N total" counter — replaces squinting at the
+   621→  table to count outcomes.
+   622→- Designed empty state (dashed emerald icon circle + guidance, distinct
+   623→  live-vs-polling copy); skeleton rows match the card height.
+   624→- React Compiler compliance: the tally is plain per-render computation
+   625→  (useMemo over the SSE-derived array is un-preservable per the compiler;
+   626→  loop is ≤200 items, negligible).
+   627→
+   628→### PUBLIC DASHBOARD — relative timestamps
+   629→- "Last Cycle" field: `toLocaleString()` → formatRelativeTime ("1h ago"),
+   630→  exact timestamp in the new `title` tooltip (PublicField gained an
+   631→  optional title prop).
+   632→- Recent Activity event timestamps: absolute clock time → relative time
+   633→  with exact-time tooltip. Verified live on ?view=public.
+   634→
+   635→## Verification results
+   636→- Desktop (1280) + mobile (480, per-tab overflow check): all 13 tabs —
+   637→  0 console errors, 0 page errors, 0px overflow.
+   638→- Tasks tab: VLM 8/10 both viewports; rows stack safely at 480px.
+   639→- Public view: "Last Cycle 1h ago" verified in DOM, 0 console errors.
+   640→- Terminal GITHUB_TOKEN workflow re-verified end-to-end (typed → write
+   641→  confirm → Execute → output rendered). NOTE: after the drawer opens,
+   642→  snapshot refs can go stale mid-flow — re-snapshot before clicking dialog
+   643→  buttons, or click by text via eval.
+   644→- `bun run lint` clean; all APIs 200; dev.log clean.
+   645→
+   646→## Unresolved issues / risks + next-phase priorities
+   647→1. **[HIGH] Real PR submission end-to-end** — operator-blocked (token via
+   648→   the terminal's amber chip). 1 approval pending.
+   649→2. **[MED] Push v0.4.4 to GitHub** — Tasks v2 + public relative timestamps.
+   650→3. **[LOW] Tasks VLM mobile nit**: very long model IDs (e.g.
+   651→   `groq/llama-3.3-70b-versatile`) could wrap aggressively on very narrow
+   652→   screens — truncation acceptable, revisit if operators report it.
+   653→4. **[LOW] All 13 tabs now ≥ 8/10 VLM** — remaining polish budget is best
+   654→   spent on new operator-value features (e.g. report history controls,
+   655→   deep-linkable filters) rather than more restyling.
+   656→

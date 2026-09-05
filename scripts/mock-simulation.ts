@@ -150,6 +150,9 @@ async function main(): Promise<number> {
         paymentMethod: op.paymentMethod,
         paymentVerified: false,
         sourceVerified: false,
+        // v0.4.1 watchlist fields — simulated opportunities start unwatched.
+        watched: false,
+        watchedAt: null,
         riskScore: 0,
         verificationScore: 0,
         confidence: 0,

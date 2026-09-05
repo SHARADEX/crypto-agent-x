@@ -13,7 +13,7 @@
 // the DETAIL endpoint returned the raw flat row, forcing client-side
 // shape-tolerance hacks — see opportunity-detail-sheet.tsx history.)
 
-import type { Opportunity } from "./types";
+import type { Opportunity, OpportunityCategory, OpportunityStatus } from "./types";
 
 /** Structural input: the scalar columns of the Prisma Opportunity row. */
 export interface OpportunityRowScalars {
@@ -79,7 +79,10 @@ export function serializeOpportunity(
     source: row.source,
     sourceUrl: row.sourceUrl,
     organization: row.organization,
-    category: row.category,
+    // Prisma stores the category as a plain string; the canonical shape
+    // narrows it to the OpportunityCategory union. The value originated
+    // from a validated category at write time, so the cast is safe.
+    category: row.category as OpportunityCategory,
     reward: {
       amount: row.rewardAmount,
       currency: row.rewardCurrency,
@@ -101,7 +104,8 @@ export function serializeOpportunity(
     riskScore: row.riskScore,
     verificationScore: row.verificationScore,
     confidence: row.confidence,
-    status: row.status,
+    // Same as category above — validated at write time, string in SQLite.
+    status: row.status as OpportunityStatus,
     expectedValue: row.expectedValue,
     expectedHourly: row.expectedHourly,
     riskAdjustedHourly: row.riskAdjustedHourly,

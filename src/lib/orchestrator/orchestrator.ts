@@ -34,6 +34,7 @@ import { logEvent } from "@/lib/agent/events";
 import { canRun, getState } from "@/lib/agent/state";
 import { refreshKillSwitchState } from "@/lib/kill-switch";
 import { evaluateRisk } from "@/lib/policy";
+import { getAdapterForCategory } from "@/lib/execution-adapters";
 import { recordExpected } from "@/lib/economics/ledger";
 import { recordStrategyOutcome } from "@/lib/economics/strategy-stats";
 import type { AgentName, Opportunity, RiskLevel } from "@/lib/agent/types";
@@ -349,19 +350,21 @@ export async function processOpportunity(
     }
 
     // After the review agent succeeds on an "executed" opportunity, transition
-    // to "submitted" (Phase-3 fix, Issue 10). The review agent verifies the
-    // deliverable satisfies the opportunity requirements; once it accepts
-    // (or returns no verdict — the default fallback), we hand off to the PR
-    // monitor which transitions submitted → awaiting_payment ONLY when the
-    // PR is actually merged (not on review acceptance). The review agent's
-    // own verdict field is consulted when present; "needs_revision" sends
-    // the opportunity back to "queued" for rework; "reject" → failed.
+    // to "approved" when a REAL PR submission is possible (GITHUB_TOKEN set +
+    // GitHub issue sourceUrl + not mock mode) so the execution agent opens the
+    // actual pull request and sets "submitted" itself; otherwise fall back to
+    // "submitted" directly (Phase-3 fix, Issue 10 simulated path). The PR
+    // monitor then transitions submitted → awaiting_payment ONLY when the PR
+    // is actually merged (not on review acceptance). The review agent's own
+    // verdict field is consulted when present; "needs_revision" sends the
+    // opportunity back to "queued" for rework; "reject" → failed.
     if (specialist.agent === "review" && op.status === "executed") {
       const reviewResult = dispatched.output.result as Record<string, unknown> | undefined;
       const verdict = reviewResult?.verdict as string | undefined;
       const nextStatus =
         verdict === "needs_revision" ? "queued"
         : verdict === "reject" ? "failed"
+        : realPrSubmissionEligible(op) ? "approved"
         : "submitted"; // Phase-3 fix (Issue 10): was "awaiting_payment".
       await db.opportunity.update({
         where: { id: opportunityId },
@@ -377,8 +380,42 @@ export async function processOpportunity(
         taskId: null,
         success: true,
         nextAgent: undefined,
-        notes: [`review verdict='${verdict ?? "accept"}' → status=${nextStatus}`],
+        notes: [
+          `review verdict='${verdict ?? "accept"}' → status=${nextStatus}${
+            nextStatus === "approved" ? " (real PR submission path)" : ""
+          }`,
+        ],
       });
+    }
+
+    // Execution-agent gate blocks. The execution agent returns success=true
+    // with allowed=false (policy / approval gate) or skipped=true (observe
+    // mode) instead of a hard failure. Stop walking the lifecycle here — the
+    // status stays "approved" and a later cycle retries once the operator
+    // approves the pending Approval row (or raises the autonomy mode).
+    // Without this break the dispatch loop would spin 8 times re-creating
+    // blocked execution Tasks.
+    if (specialist.agent === "execution") {
+      const gateResult = dispatched.output.result as
+        | Record<string, unknown>
+        | undefined;
+      if (
+        gateResult &&
+        (gateResult.allowed === false || gateResult.skipped === true)
+      ) {
+        result.steps.push({
+          agent: "orchestrator",
+          taskId: null,
+          success: true,
+          nextAgent: undefined,
+          notes: [
+            `execution gated: ${String(
+              gateResult.reason ?? "blocked by policy/approval gate"
+            )}`,
+          ],
+        });
+        break;
+      }
     }
   }
 
@@ -512,6 +549,39 @@ function decideNextSpecialist(op: {
 
     default:
       return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Real-PR-submission eligibility (the missing execution wiring)
+// ---------------------------------------------------------------------------
+
+/**
+ * True when this opportunity's deliverable can be submitted as a REAL
+ * GitHub pull request right now:
+ *   - not MOCK_MODE (mock runs keep the simulated path), AND
+ *   - the adapter selection for (category, sourceUrl) resolves to the
+ *     GithubPrAdapter AND that adapter is configured (GITHUB_TOKEN set).
+ *
+ * Used by the post-review transition: when the review agent accepts a
+ * deliverable that can really be PR'd, the opportunity goes to status
+ * "approved" so the execution agent opens the actual pull request
+ * (subject to the policy + approval gates) instead of jumping straight
+ * to "submitted" with no external artifact.
+ */
+function realPrSubmissionEligible(op: {
+  category: string;
+  sourceUrl: string;
+}): boolean {
+  if ((process.env.MOCK_MODE ?? "").toLowerCase() === "true") return false;
+  try {
+    const adapter = getAdapterForCategory(
+      op.category ?? "",
+      op.sourceUrl ?? ""
+    );
+    return adapter.id === "github-pr" && adapter.isConfigured();
+  } catch {
+    return false;
   }
 }
 
@@ -707,6 +777,11 @@ export async function selectNextOpportunity(
           in: [
             "researching",
             "planning",
+            // Queued opportunities are mid-flight too: queueForExecution
+            // runs mid-processOpportunity, so a crash/restart between the
+            // queue step and the coding step used to orphan them forever
+            // (nothing ever selected status "queued"). Resume them here.
+            "queued",
             "approved",
             "executed",
             "submitted", // Phase-3 fix (Issue 10): resume submitted PRs too.

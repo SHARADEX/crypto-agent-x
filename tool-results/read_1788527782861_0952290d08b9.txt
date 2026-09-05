@@ -1,0 +1,926 @@
+     1→"use client";
+     2→
+     3→// OpportunitiesTab v2 — card-list design.
+     4→//
+     5→// Replaces the raw 11-column table (VLM 3/10) with a responsive card list:
+     6→//   1. Header + actions (Seed New / Export CSV)
+     7→//   2. Quick status chips with live counts (one tap filtering)
+     8→//   3. Compact filter bar (status / category / source / sort / search)
+     9→//   4. Stat strip — shown / active / avg reward / avg risk
+    10→//   5. Opportunity cards: title + reward, muted metadata pills, score meters
+    11→//   6. Designed empty state with CTAs (no more bare "no match" row)
+    12→//
+    13→// The counts query shares the Daily Briefing cache (same queryKey) so no
+    14→// extra network request is made when navigating between tabs.
+    15→
+    16→import * as React from "react";
+    17→import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+    18→import { toast } from "sonner";
+    19→import {
+    20→  Card,
+    21→  CardContent,
+    22→} from "@/components/ui/card";
+    23→import { Button } from "@/components/ui/button";
+    24→import { Input } from "@/components/ui/input";
+    25→import { Skeleton } from "@/components/ui/skeleton";
+    26→import {
+    27→  Select,
+    28→  SelectContent,
+    29→  SelectItem,
+    30→  SelectTrigger,
+    31→  SelectValue,
+    32→} from "@/components/ui/select";
+    33→import {
+    34→  BadgeCheck,
+    35→  Clock,
+    36→  ExternalLink,
+    37→  Loader2,
+    38→  Plus,
+    39→  Radar,
+    40→  Search,
+    41→  Sparkles,
+    42→  Star,
+    43→  Download,
+    44→  FilterX,
+    45→  X,
+    46→} from "lucide-react";
+    47→import { WatchStar } from "./watch-star";
+    48→import { daysUntil, deadlineUrgency, DEADLINE_ACTIVE_STATUSES } from "./lib/deadline";
+    49→import {
+    50→  api,
+    51→  formatRelativeTime,
+    52→  formatUsd,
+    53→  statusColor,
+    54→} from "./lib/api";
+    55→import { ScoreBar } from "./score-bar";
+    56→import { cn } from "@/lib/utils";
+    57→import type {
+    58→  Opportunity,
+    59→  OpportunityCategory,
+    60→  OpportunityStatus,
+    61→} from "@/lib/agent/types";
+    62→
+    63→const STATUS_OPTIONS: OpportunityStatus[] = [
+    64→  "discovered",
+    65→  "researching",
+    66→  "verified",
+    67→  "queued",
+    68→  "planning",
+    69→  "approved",
+    70→  "executing",
+    71→  "executed",
+    72→  "submitted", // Phase-3 fix (Issue 10): PR opened, awaiting review/merge.
+    73→  "awaiting_payment",
+    74→  "needs_improvement",
+    75→  "paid",
+    76→  "rejected",
+    77→  "failed",
+    78→];
+    79→
+    80→const CATEGORY_OPTIONS: OpportunityCategory[] = [
+    81→  "bounty",
+    82→  "github_bounty",
+    83→  "bug_bounty",
+    84→  "hackathon",
+    85→  "docs",
+    86→  "developer_task",
+    87→  "coding_task",
+    88→  "data_task",
+    89→  "freelance",
+    90→  "grant",
+    91→  "ecosystem",
+    92→  "referral",
+    93→  "content",
+    94→  "oss_contribution",
+    95→];
+    96→
+    97→const SORT_OPTIONS = [
+    98→  { value: "score", label: "Best Score" },
+    99→  { value: "reward", label: "Highest Reward" },
+   100→  { value: "newest", label: "Newest" },
+   101→  { value: "deadline", label: "Soonest Deadline" },
+   102→] as const;
+   103→
+   104→// Pipeline order for the quick status chips (matching the briefing funnel).
+   105→const CHIP_ORDER: OpportunityStatus[] = [
+   106→  "discovered",
+   107→  "verified",
+   108→  "queued",
+   109→  "approved",
+   110→  "executing",
+   111→  "executed",
+   112→  "submitted",
+   113→  "awaiting_payment",
+   114→  "paid",
+   115→  "needs_improvement",
+   116→  "rejected",
+   117→  "failed",
+   118→];
+   119→
+   120→export function OpportunitiesTab({
+   121→  onOpenOpportunity,
+   122→  initialStatus,
+   123→  initialClosingSoon,
+   124→  initialWatchlist,
+   125→  onFiltersChange,
+   126→}: {
+   127→  onOpenOpportunity: (id: string) => void;
+   128→  /**
+   129→   * Optional initial status filter — set by the Lifecycle tab when the user
+   130→   * clicks a status node. The value is applied on mount + whenever it
+   131→   * changes (so navigating from Lifecycle → Opportunities with a different
+   132→   * status updates the filter even when OpportunitiesTab is already
+   133→   * mounted, which is the case inside the dashboard's tab switcher).
+   134→   */
+   135→  initialStatus?: OpportunityStatus;
+   136→  /**
+   137→   * v0.4.3: initial closing-soon filter — set by the briefing Action Center
+   138→   * "Triage" CTA. Applied once on mount (sentinel-guarded so re-navigations
+   139→   * with the same value still re-apply).
+   140→   */
+   141→  initialClosingSoon?: boolean;
+   142→  /**
+   143→   * v0.4.5: initial watchlist-only filter — set by the `?watchlist=1`
+   144→   * deep-link param (read once by the page client on mount).
+   145→   */
+   146→  initialWatchlist?: boolean;
+   147→  /**
+   148→   * v0.4.5: reports local filter changes back to the page client so the
+   149→   * URL deep-link params and remount behavior always honor the operator's
+   150→   * last choice instead of a stale navigation intent.
+   151→   */
+   152→  onFiltersChange?: (filters: {
+   153→    status: string | null;
+   154→    closingSoon: boolean;
+   155→    watchlist: boolean;
+   156→  }) => void;
+   157→}) {
+   158→  const qc = useQueryClient();
+   159→  const [status, setStatus] = React.useState<OpportunityStatus | "all">(
+   160→    initialStatus ?? "all"
+   161→  );
+   162→  const [category, setCategory] = React.useState<OpportunityCategory | "all">("all");
+   163→  const [source, setSource] = React.useState<string>("all");
+   164→  const [sort, setSort] = React.useState<(typeof SORT_OPTIONS)[number]["value"]>("score");
+   165→  const [search, setSearch] = React.useState("");
+   166→  // v0.4.1: watchlist-only filter (star toggle lives on each card).
+   167→  // v0.4.5: seeded from the `?watchlist=1` deep-link param.
+   168→  const [watchlistOnly, setWatchlistOnly] = React.useState(
+   169→    initialWatchlist ?? false
+   170→  );
+   171→  // v0.4.2: deadline-urgency filter — active opportunities whose deadline
+   172→  // lands within 7 days (overdue included). Client-side over the list cache.
+   173→  const [closingSoonOnly, setClosingSoonOnly] = React.useState(
+   174→    initialClosingSoon ?? false
+   175→  );
+   176→  // Sentinel: consume initialClosingSoon once (avoids re-activating the
+   177→  // filter after the operator clears it while staying on this tab).
+   178→  const consumedInitialClosingSoon = React.useRef(false);
+   179→  const searchRef = React.useRef<HTMLInputElement>(null);
+   180→
+   181→  // "/" focuses search — matches the command-palette keyboard convention.
+   182→  React.useEffect(() => {
+   183→    const onKey = (e: KeyboardEvent) => {
+   184→      if (
+   185→        e.key === "/" &&
+   186→        !(e.target instanceof HTMLInputElement) &&
+   187→        !(e.target instanceof HTMLTextAreaElement)
+   188→      ) {
+   189→        e.preventDefault();
+   190→        searchRef.current?.focus();
+   191→      }
+   192→    };
+   193→    window.addEventListener("keydown", onKey);
+   194→    return () => window.removeEventListener("keydown", onKey);
+   195→  }, []);
+   196→
+   197→  // Sync `initialStatus` → `status` whenever it changes (so navigating from
+   198→  // the Lifecycle tab to Opportunities with a different status updates the
+   199→  // filter even when OpportunitiesTab is already mounted).
+   200→  React.useEffect(() => {
+   201→    if (initialStatus) setStatus(initialStatus);
+   202→  }, [initialStatus]);
+   203→
+   204→  // v0.4.3: apply the briefing's closing-soon intent once per navigation.
+   205→  React.useEffect(() => {
+   206→    if (initialClosingSoon && !consumedInitialClosingSoon.current) {
+   207→      consumedInitialClosingSoon.current = true;
+   208→      setClosingSoonOnly(true);
+   209→    }
+   210→    if (!initialClosingSoon) {
+   211→      consumedInitialClosingSoon.current = false;
+   212→    }
+   213→  }, [initialClosingSoon]);
+   214→
+   215→  // v0.4.5: report local filter changes upward so the page client can sync
+   216→  // the deep-link URL params (and remounts honor the operator's last choice).
+   217→  // Fires on mount with the prop-derived state — the parent's setState then
+   218→  // becomes a same-value no-op, so no render loop.
+   219→  React.useEffect(() => {
+   220→    onFiltersChange?.({
+   221→      status: status === "all" ? null : status,
+   222→      closingSoon: closingSoonOnly,
+   223→      watchlist: watchlistOnly,
+   224→    });
+   225→  }, [status, closingSoonOnly, watchlistOnly, onFiltersChange]);
+   226→
+   227→  const { data, isLoading, error } = useQuery({
+   228→    queryKey: ["opportunities", { status, category, source, sort, watchlistOnly }],
+   229→    queryFn: () =>
+   230→      api.opportunities.list({
+   231→        status: status === "all" ? undefined : status,
+   232→        category: category === "all" ? undefined : category,
+   233→        source: source === "all" ? undefined : source,
+   234→        watched: watchlistOnly ? true : undefined,
+   235→        sort,
+   236→        limit: 200,
+   237→      }),
+   238→    refetchInterval: 15_000,
+   239→  });
+   240→
+   241→  // Share the Daily Briefing's full-list cache for chip counts (no extra fetch).
+   242→  const { data: all } = useQuery({
+   243→    queryKey: ["opportunities", "briefing"],
+   244→    queryFn: () =>
+   245→      api.opportunities.list({ limit: 500 } as Parameters<typeof api.opportunities.list>[0]),
+   246→    refetchInterval: 60_000,
+   247→  });
+   248→
+   249→  const seedMut = useMutation({
+   250→    mutationFn: () => api.opportunities.seed(),
+   251→    onSuccess: (res) => {
+   252→      const summary = (res.summary as { new?: number; discovered?: number } | undefined) ?? {};
+   253→      toast.success(
+   254→        `Discovery complete — ${summary.new ?? 0} new / ${summary.discovered ?? 0} total.`
+   255→      );
+   256→      qc.invalidateQueries({ queryKey: ["opportunities"] });
+   257→      qc.invalidateQueries({ queryKey: ["analytics"] });
+   258→    },
+   259→    onError: (e) => toast.error(`Seed failed: ${e.message}`),
+   260→  });
+   261→
+   262→  const filtered = React.useMemo(() => {
+   263→    let rows = data?.opportunities ?? [];
+   264→    if (closingSoonOnly) {
+   265→      rows = rows.filter(
+   266→        (o) =>
+   267→          DEADLINE_ACTIVE_STATUSES.has(o.status) &&
+   268→          o.deadline &&
+   269→          Date.parse(o.deadline) <= Date.now() + 7 * 86_400_000
+   270→      );
+   271→    }
+   272→    if (!search.trim()) return rows;
+   273→    const q = search.trim().toLowerCase();
+   274→    return rows.filter(
+   275→      (r) =>
+   276→        r.title.toLowerCase().includes(q) ||
+   277→        r.organization.toLowerCase().includes(q) ||
+   278→        r.sourceUrl.toLowerCase().includes(q)
+   279→    );
+   280→  }, [data, search, closingSoonOnly]);
+   281→
+   282→  const sources = React.useMemo(() => {
+   283→    const s = new Set<string>();
+   284→    (data?.opportunities ?? []).forEach((r) => s.add(r.source));
+   285→    return Array.from(s).sort();
+   286→  }, [data]);
+   287→
+   288→  // Status chips with counts (from the unfiltered briefing cache).
+   289→  const chips = React.useMemo(() => {
+   290→    const counts = new Map<OpportunityStatus, number>();
+   291→    (all?.opportunities ?? []).forEach((o) => {
+   292→      counts.set(o.status, (counts.get(o.status) ?? 0) + 1);
+   293→    });
+   294→    return CHIP_ORDER.filter((s) => counts.get(s)).map((s) => ({
+   295→      status: s,
+   296→      count: counts.get(s) ?? 0,
+   297→    }));
+   298→  }, [all]);
+   299→
+   300→  // Watchlist count (from the briefing cache — no extra fetch).
+   301→  const watchedCount = React.useMemo(
+   302→    () => (all?.opportunities ?? []).filter((o) => o.watched).length,
+   303→    [all]
+   304→  );
+   305→
+   306→  // v0.4.2: closing-soon count — active + deadline ≤ 7d out (overdue
+   307→  // included). Powers the ⏰ chip so the operator can triage time pressure.
+   308→  const closingSoonCount = React.useMemo(
+   309→    () =>
+   310→      (all?.opportunities ?? []).filter(
+   311→        (o) =>
+   312→          DEADLINE_ACTIVE_STATUSES.has(o.status) &&
+   313→          o.deadline &&
+   314→          Date.parse(o.deadline) <= Date.now() + 7 * 86_400_000
+   315→      ).length,
+   316→    [all]
+   317→  );
+   318→
+   319→  const filtersActive =
+   320→    status !== "all" ||
+   321→    category !== "all" ||
+   322→    source !== "all" ||
+   323→    watchlistOnly ||
+   324→    closingSoonOnly ||
+   325→    !!search.trim();
+   326→
+   327→  const clearFilters = () => {
+   328→    setStatus("all");
+   329→    setCategory("all");
+   330→    setSource("all");
+   331→    setSearch("");
+   332→    setWatchlistOnly(false);
+   333→    setClosingSoonOnly(false);
+   334→  };
+   335→
+   336→  // Stat strip aggregates.
+   337→  const stats = React.useMemo(() => {
+   338→    if (filtered.length === 0) return null;
+   339→    const active = filtered.filter((o) =>
+   340→      ["queued", "approved", "executing", "executed", "submitted", "awaiting_payment"].includes(o.status)
+   341→    ).length;
+   342→    const avgReward =
+   343→      filtered.reduce((s, o) => s + (o.reward.estimated_usd ?? 0), 0) / filtered.length;
+   344→    const avgRisk = filtered.reduce((s, o) => s + (o.riskScore ?? 0), 0) / filtered.length;
+   345→    return { active, avgReward, avgRisk };
+   346→  }, [filtered]);
+   347→
+   348→  if (error) {
+   349→    return (
+   350→      <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-300">
+   351→        Failed to load opportunities: {String(error)}
+   352→      </div>
+   353→    );
+   354→  }
+   355→
+   356→  return (
+   357→    <div className="space-y-4">
+   358→      {/* Header + actions */}
+   359→      <div className="flex flex-wrap items-end justify-between gap-3">
+   360→        <div>
+   361→          <h2 className="flex items-center gap-2 text-base font-bold tracking-tight">
+   362→            <Radar className="size-4 text-emerald-500" />
+   363→            Opportunities
+   364→          </h2>
+   365→          <p className="mt-0.5 text-xs text-muted-foreground">
+   366→            {data?.filteredTotal ?? 0} shown of {data?.total ?? all?.total ?? 0} discovered ·
+   367→            click a card for the full brief
+   368→          </p>
+   369→        </div>
+   370→        <div className="flex items-center gap-2">
+   371→          <Button
+   372→            size="sm"
+   373→            variant="outline"
+   374→            className="gap-1.5"
+   375→            onClick={() => seedMut.mutate()}
+   376→            disabled={seedMut.isPending}
+   377→          >
+   378→            {seedMut.isPending ? (
+   379→              <Loader2 className="size-3.5 animate-spin" />
+   380→            ) : (
+   381→              <Plus className="size-3.5" />
+   382→            )}
+   383→            Seed New
+   384→          </Button>
+   385→          {/* Phase-3 DEV-REVIEW-4 (priority #4): operator data export. */}
+   386→          <Button
+   387→            size="sm"
+   388→            variant="ghost"
+   389→            className="gap-1 text-muted-foreground"
+   390→            title="Export the current filtered set as CSV (download)"
+   391→            onClick={() => {
+   392→              const params = new URLSearchParams({ format: "csv" });
+   393→              if (status !== "all") params.set("status", status);
+   394→              if (category !== "all") params.set("category", category);
+   395→              if (source !== "all") params.set("source", source);
+   396→              // Open in a new tab so the browser downloads the file
+   397→              // without navigating away from the dashboard.
+   398→              window.open(`/api/export/opportunities?${params.toString()}`, "_blank");
+   399→            }}
+   400→          >
+   401→            <Download className="size-3.5" />
+   402→            CSV
+   403→          </Button>
+   404→        </div>
+   405→      </div>
+   406→
+   407→      {/* Quick status chips — one-tap pipeline filtering */}
+   408→      {chips.length > 0 && (
+   409→        <div
+   410→          className="scrollbar-thin flex items-center gap-1.5 overflow-x-auto pb-0.5"
+   411→          role="tablist"
+   412→          aria-label="Quick status filter"
+   413→        >
+   414→          <StatusChip
+   415→            active={status === "all" && !watchlistOnly}
+   416→            label="All"
+   417→            count={all?.total ?? 0}
+   418→            onClick={() => {
+   419→              setStatus("all");
+   420→              setWatchlistOnly(false);
+   421→            }}
+   422→          />
+   423→          {chips.map((c) => (
+   424→            <StatusChip
+   425→              key={c.status}
+   426→              active={status === c.status && !watchlistOnly}
+   427→              label={c.status.replace(/_/g, " ")}
+   428→              count={c.count}
+   429→              onClick={() => {
+   430→                setStatus(c.status);
+   431→                setWatchlistOnly(false);
+   432→              }}
+   433→            />
+   434→          ))}
+   435→          {/* v0.4.1: watchlist chip — starred opportunities only */}
+   436→          {watchedCount > 0 && (
+   437→            <button
+   438→              type="button"
+   439→              role="tab"
+   440→              aria-selected={watchlistOnly}
+   441→              onClick={() => setWatchlistOnly((v) => !v)}
+   442→              className={cn(
+   443→                "flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+   444→                watchlistOnly
+   445→                  ? "border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+   446→                  : "border-border/60 bg-card text-muted-foreground hover:border-amber-500/40 hover:text-amber-600 dark:hover:text-amber-400"
+   447→              )}
+   448→            >
+   449→              <Star className="size-3 fill-current" aria-hidden />
+   450→              Watchlist
+   451→              <span
+   452→                className={cn(
+   453→                  "rounded-full px-1.5 text-[10px] tabular-nums",
+   454→                  watchlistOnly
+   455→                    ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
+   456→                    : "bg-muted text-muted-foreground"
+   457→                )}
+   458→              >
+   459→                {watchedCount}
+   460→              </span>
+   461→            </button>
+   462→          )}
+   463→          {/* v0.4.2: closing-soon chip — deadline within 7d (overdue incl.) */}
+   464→          {closingSoonCount > 0 && (
+   465→            <button
+   466→              type="button"
+   467→              role="tab"
+   468→              aria-selected={closingSoonOnly}
+   469→              onClick={() => setClosingSoonOnly((v) => !v)}
+   470→              title="Active opportunities with a deadline in the next 7 days (past-deadline included)"
+   471→              className={cn(
+   472→                "flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+   473→                closingSoonOnly
+   474→                  ? "border-red-500/40 bg-red-500/15 text-red-700 dark:text-red-300"
+   475→                  : "border-border/60 bg-card text-muted-foreground hover:border-red-500/40 hover:text-red-600 dark:hover:text-red-400"
+   476→              )}
+   477→            >
+   478→              <Clock className="size-3" aria-hidden />
+   479→              Closing soon
+   480→              <span
+   481→                className={cn(
+   482→                  "rounded-full px-1.5 text-[10px] tabular-nums",
+   483→                  closingSoonOnly
+   484→                    ? "bg-red-500/20 text-red-700 dark:text-red-300"
+   485→                    : "bg-muted text-muted-foreground"
+   486→                )}
+   487→              >
+   488→                {closingSoonCount}
+   489→              </span>
+   490→            </button>
+   491→          )}
+   492→        </div>
+   493→      )}
+   494→
+   495→      {/* Filter bar */}
+   496→      <Card className="border-border/60">
+   497→        <CardContent className="p-3">
+   498→          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+   499→            <Select value={status} onValueChange={(v) => setStatus(v as OpportunityStatus | "all")}>
+   500→              <SelectTrigger size="sm" aria-label="Filter by status">
+   501→                <SelectValue placeholder="Status" />
+   502→              </SelectTrigger>
+   503→              <SelectContent>
+   504→                <SelectItem value="all">All statuses</SelectItem>
+   505→                {STATUS_OPTIONS.map((s) => (
+   506→                  <SelectItem key={s} value={s} className="capitalize">
+   507→                    {s.replace(/_/g, " ")}
+   508→                  </SelectItem>
+   509→                ))}
+   510→              </SelectContent>
+   511→            </Select>
+   512→
+   513→            <Select value={category} onValueChange={(v) => setCategory(v as OpportunityCategory | "all")}>
+   514→              <SelectTrigger size="sm" aria-label="Filter by category">
+   515→                <SelectValue placeholder="Category" />
+   516→              </SelectTrigger>
+   517→              <SelectContent>
+   518→                <SelectItem value="all">All categories</SelectItem>
+   519→                {CATEGORY_OPTIONS.map((c) => (
+   520→                  <SelectItem key={c} value={c} className="capitalize">
+   521→                    {c.replace(/_/g, " ")}
+   522→                  </SelectItem>
+   523→                ))}
+   524→              </SelectContent>
+   525→            </Select>
+   526→
+   527→            <Select value={source} onValueChange={(v) => setSource(v)}>
+   528→              <SelectTrigger size="sm" aria-label="Filter by source">
+   529→                <SelectValue placeholder="Source" />
+   530→              </SelectTrigger>
+   531→              <SelectContent>
+   532→                <SelectItem value="all">All sources</SelectItem>
+   533→                {sources.map((s) => (
+   534→                  <SelectItem key={s} value={s}>
+   535→                    {s}
+   536→                  </SelectItem>
+   537→                ))}
+   538→              </SelectContent>
+   539→            </Select>
+   540→
+   541→            <Select value={sort} onValueChange={(v) => setSort(v as typeof sort)}>
+   542→              <SelectTrigger size="sm" aria-label="Sort by">
+   543→                <SelectValue />
+   544→              </SelectTrigger>
+   545→              <SelectContent>
+   546→                {SORT_OPTIONS.map((o) => (
+   547→                  <SelectItem key={o.value} value={o.value}>
+   548→                    {o.label}
+   549→                  </SelectItem>
+   550→                ))}
+   551→              </SelectContent>
+   552→            </Select>
+   553→
+   554→            <div className="relative col-span-2 sm:col-span-1">
+   555→              <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+   556→              <Input
+   557→                ref={searchRef}
+   558→                placeholder="Search title/org/url…  ( / )"
+   559→                value={search}
+   560→                onChange={(e) => setSearch(e.target.value)}
+   561→                className="h-8 pl-7 text-xs"
+   562→              />
+   563→              {search && (
+   564→                <button
+   565→                  type="button"
+   566→                  aria-label="Clear search"
+   567→                  onClick={() => setSearch("")}
+   568→                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+   569→                >
+   570→                  <X className="size-3" />
+   571→                </button>
+   572→              )}
+   573→            </div>
+   574→          </div>
+   575→
+   576→          {/* Active filters + stat strip */}
+   577→          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2.5">
+   578→            <div className="flex flex-wrap items-center gap-1.5">
+   579→              {filtersActive ? (
+   580→                <>
+   581→                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+   582→                    Filters
+   583→                  </span>
+   584→                  {status !== "all" && (
+   585→                    <FilterChip onClear={() => setStatus("all")}>
+   586→                      {status.replace(/_/g, " ")}
+   587→                    </FilterChip>
+   588→                  )}
+   589→                  {category !== "all" && (
+   590→                    <FilterChip onClear={() => setCategory("all")}>
+   591→                      {category.replace(/_/g, " ")}
+   592→                    </FilterChip>
+   593→                  )}
+   594→                  {source !== "all" && (
+   595→                    <FilterChip onClear={() => setSource("all")}>{source}</FilterChip>
+   596→                  )}
+   597→                  {watchlistOnly && (
+   598→                    <FilterChip onClear={() => setWatchlistOnly(false)}>
+   599→                      ★ watchlist
+   600→                    </FilterChip>
+   601→                  )}
+   602→                  {closingSoonOnly && (
+   603→                    <FilterChip onClear={() => setClosingSoonOnly(false)}>
+   604→                      ⏰ closing soon
+   605→                    </FilterChip>
+   606→                  )}
+   607→                  {search.trim() && (
+   608→                    <FilterChip onClear={() => setSearch("")}>“{search.trim()}”</FilterChip>
+   609→                  )}
+   610→                  <button
+   611→                    type="button"
+   612→                    onClick={clearFilters}
+   613→                    className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+   614→                  >
+   615→                    <FilterX className="size-3" />
+   616→                    Clear all
+   617→                  </button>
+   618→                </>
+   619→              ) : (
+   620→                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+   621→                  No filters
+   622→                </span>
+   623→              )}
+   624→            </div>
+   625→            {stats && (
+   626→              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+   627→                <span className="tabular-nums">
+   628→                  <span className="font-semibold text-foreground tabular-nums">
+   629→                    {filtered.length}
+   630→                  </span>{" "}
+   631→                  shown
+   632→                </span>
+   633→                <span className="hidden items-center gap-1 sm:flex">
+   634→                  <span className="size-1.5 rounded-full bg-teal-500" />
+   635→                  {stats.active} active
+   636→                </span>
+   637→                <span className="hidden items-center gap-1 md:flex">
+   638→                  avg reward
+   639→                  <span className="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
+   640→                    {formatUsd(stats.avgReward, { compact: true })}
+   641→                  </span>
+   642→                </span>
+   643→                <span className="hidden items-center gap-1 md:flex">
+   644→                  avg risk
+   645→                  <span className="font-semibold tabular-nums">
+   646→                    {stats.avgRisk.toFixed(0)}
+   647→                  </span>
+   648→                </span>
+   649→              </div>
+   650→            )}
+   651→          </div>
+   652→        </CardContent>
+   653→      </Card>
+   654→
+   655→      {/* Card list */}
+   656→      {isLoading ? (
+   657→        <div className="space-y-2">
+   658→          {Array.from({ length: 8 }).map((_, i) => (
+   659→            <Skeleton key={i} className="h-20 w-full rounded-lg" />
+   660→          ))}
+   661→        </div>
+   662→      ) : filtered.length === 0 ? (
+   663→        <Card className="border-border/60">
+   664→          <CardContent>
+   665→            <div className="empty-state">
+   666→              <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+   667→                <Radar className="size-5 text-muted-foreground" />
+   668→              </div>
+   669→              <p className="text-sm font-medium">No opportunities match</p>
+   670→              <p className="max-w-md text-xs text-muted-foreground">
+   671→                {filtersActive
+   672→                  ? "Nothing in the current filter. Loosen the filters or run a fresh discovery cycle."
+   673→                  : "The pipeline is empty. Seed a discovery cycle and the scout agents will scan sources for bounties, tasks and grants."}
+   674→              </p>
+   675→              <div className="mt-3 flex items-center gap-2">
+   676→                {filtersActive && (
+   677→                  <Button size="sm" variant="outline" className="gap-1.5" onClick={clearFilters}>
+   678→                    <FilterX className="size-3.5" />
+   679→                    Clear filters
+   680→                  </Button>
+   681→                )}
+   682→                <Button
+   683→                  size="sm"
+   684→                  className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-600/90"
+   685→                  onClick={() => seedMut.mutate()}
+   686→                  disabled={seedMut.isPending}
+   687→                >
+   688→                  {seedMut.isPending ? (
+   689→                    <Loader2 className="size-3.5 animate-spin" />
+   690→                  ) : (
+   691→                    <Sparkles className="size-3.5" />
+   692→                  )}
+   693→                  Run discovery
+   694→                </Button>
+   695→              </div>
+   696→            </div>
+   697→          </CardContent>
+   698→        </Card>
+   699→      ) : (
+   700→        <div className="scrollbar-thin max-h-[600px] space-y-2 overflow-y-auto pr-1">
+   701→          {filtered.map((op) => (
+   702→            <OpportunityCard key={op.id} op={op} onOpen={onOpenOpportunity} />
+   703→          ))}
+   704→        </div>
+   705→      )}
+   706→    </div>
+   707→  );
+   708→}
+   709→
+   710→// ---------------------------------------------------------------------------
+   711→// StatusChip — quick one-tap pipeline filter chip
+   712→// ---------------------------------------------------------------------------
+   713→
+   714→function StatusChip({
+   715→  active,
+   716→  label,
+   717→  count,
+   718→  onClick,
+   719→}: {
+   720→  active: boolean;
+   721→  label: string;
+   722→  count: number;
+   723→  onClick: () => void;
+   724→}) {
+   725→  return (
+   726→    <button
+   727→      type="button"
+   728→      role="tab"
+   729→      aria-selected={active}
+   730→      onClick={onClick}
+   731→      className={cn(
+   732→        "flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium capitalize transition-colors",
+   733→        active
+   734→          ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+   735→          : "border-border/60 bg-card text-muted-foreground hover:border-border hover:text-foreground"
+   736→      )}
+   737→    >
+   738→      {label}
+   739→      <span
+   740→        className={cn(
+   741→          "rounded-full px-1.5 text-[10px] tabular-nums",
+   742→          active
+   743→            ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+   744→            : "bg-muted text-muted-foreground"
+   745→        )}
+   746→      >
+   747→        {count}
+   748→      </span>
+   749→    </button>
+   750→  );
+   751→}
+   752→
+   753→// ---------------------------------------------------------------------------
+   754→// FilterChip — removable active-filter chip
+   755→// ---------------------------------------------------------------------------
+   756→
+   757→function FilterChip({
+   758→  children,
+   759→  onClear,
+   760→}: {
+   761→  children: React.ReactNode;
+   762→  onClear: () => void;
+   763→}) {
+   764→  return (
+   765→    <span className="flex items-center gap-1 rounded-full border border-border/60 bg-muted/50 py-0.5 pl-2 pr-1 text-[10px] font-medium capitalize">
+   766→      {children}
+   767→      <button
+   768→        type="button"
+   769→        onClick={onClear}
+   770→        aria-label="Remove filter"
+   771→        className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+   772→      >
+   773→        <X className="size-2.5" />
+   774→      </button>
+   775→    </span>
+   776→  );
+   777→}
+   778→
+   779→// ---------------------------------------------------------------------------
+   780→// OpportunityCard — responsive card row
+   781→// ---------------------------------------------------------------------------
+   782→
+   783→function OpportunityCard({
+   784→  op,
+   785→  onOpen,
+   786→}: {
+   787→  op: Opportunity;
+   788→  onOpen: (id: string) => void;
+   789→}) {
+   790→  const sc = statusColor(op.status);
+   791→  const reward = op.reward.estimated_usd ?? 0;
+   792→
+   793→  return (
+   794→    <div
+   795→      role="button"
+   796→      tabIndex={0}
+   797→      onClick={() => onOpen(op.id)}
+   798→      onKeyDown={(e) => {
+   799→        if (e.key === "Enter" || e.key === " ") {
+   800→          e.preventDefault();
+   801→          onOpen(op.id);
+   802→        }
+   803→      }}
+   804→      className="card-hover-lift row-hover group cursor-pointer rounded-lg border border-border/50 bg-card p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-500/60"
+   805→      aria-label={`Open ${op.title}`}
+   806→    >
+   807→      <div className="flex items-start justify-between gap-3">
+   808→        {/* Main block */}
+   809→        <div className="min-w-0 flex-1">
+   810→          <div className="flex items-center gap-1.5">
+   811→            {op.paymentVerified && (
+   812→              <span title="Payment verified by the source" className="shrink-0">
+   813→                <BadgeCheck className="size-3.5 text-emerald-500" aria-label="Payment verified" />
+   814→              </span>
+   815→            )}
+   816→            <p
+   817→              className="truncate text-[13px] font-semibold leading-snug transition-colors group-hover:text-emerald-700 dark:group-hover:text-emerald-300"
+   818→              title={op.title}
+   819→            >
+   820→              {op.title}
+   821→            </p>
+   822→          </div>
+   823→          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+   824→            <span
+   825→              className={cn(
+   826→                "rounded-full border px-1.5 py-px font-medium capitalize",
+   827→                sc.bg,
+   828→                sc.text,
+   829→                sc.border
+   830→              )}
+   831→            >
+   832→              {sc.label.replace(/_/g, " ")}
+   833→            </span>
+   834→            <span className="rounded-full border border-border/60 bg-muted/40 px-1.5 py-px font-medium capitalize">
+   835→              {op.category.replace(/_/g, " ")}
+   836→            </span>
+   837→            <span className="font-mono">{op.source}</span>
+   838→            <span className="hidden max-w-[10rem] truncate sm:inline" title={op.organization}>
+   839→              · {op.organization}
+   840→            </span>
+   841→            {op.deadline && (
+   842→              <span
+   843→                className={cn(
+   844→                  "flex items-center gap-0.5 rounded-full border px-1.5 py-px font-semibold tabular-nums",
+   845→                  deadlineUrgency(daysUntil(op.deadline)).className
+   846→                )}
+   847→                title={`Deadline: ${new Date(op.deadline).toLocaleString()}`}
+   848→              >
+   849→                <Clock className="size-2.5" aria-hidden />
+   850→                {deadlineUrgency(daysUntil(op.deadline)).label}
+   851→              </span>
+   852→            )}
+   853→            {/* Mobile-only compact risk indicator */}
+   854→            <span className="font-medium tabular-nums md:hidden">· risk {Math.round(op.riskScore)}</span>
+   855→          </div>
+   856→        </div>
+   857→
+   858→        {/* Right block — reward + actions */}
+   859→        <div className="flex shrink-0 flex-col items-end gap-1.5">
+   860→          <div className="flex items-center gap-1">
+   861→            <span
+   862→              className={cn(
+   863→                "font-mono text-[13px] font-semibold tabular-nums",
+   864→                reward > 0
+   865→                  ? "text-emerald-600 dark:text-emerald-400"
+   866→                  : "text-muted-foreground/70"
+   867→              )}
+   868→              title="Estimated reward"
+   869→            >
+   870→              {formatUsd(reward)}
+   871→            </span>
+   872→            {/* v0.4.1: watchlist star — pin for later review */}
+   873→            <WatchStar id={op.id} watched={!!op.watched} />
+   874→          </div>
+   875→          <div className="flex items-center gap-2">
+   876→            <span
+   877→              className="text-[10px] tabular-nums text-muted-foreground"
+   878→              title="Risk-adjusted expected value per hour"
+   879→            >
+   880→              {formatUsd(op.riskAdjustedHourly)}/hr
+   881→            </span>
+   882→            {op.sourceUrl && (
+   883→              <a
+   884→                href={op.sourceUrl}
+   885→                target="_blank"
+   886→                rel="noreferrer noopener"
+   887→                aria-label="Open source in a new tab"
+   888→                onClick={(e) => {
+   889→                  e.stopPropagation();
+   890→                }}
+   891→                className="text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+   892→              >
+   893→                <ExternalLink className="size-3.5 hover:text-foreground" />
+   894→              </a>
+   895→            )}
+   896→          </div>
+   897→        </div>
+   898→      </div>
+   899→
+   900→      {/* Meters — md and up */}
+   901→      <div className="mt-2.5 hidden items-center gap-5 border-t border-border/40 pt-2.5 md:flex">
+   902→        <div className="flex w-32 items-center gap-2">
+   903→          <span className="w-10 shrink-0 text-[9px] uppercase tracking-wider text-muted-foreground">
+   904→            Risk
+   905→          </span>
+   906→          <ScoreBar value={op.riskScore} kind="risk" />
+   907→        </div>
+   908→        <div className="flex w-32 items-center gap-2">
+   909→          <span className="w-11 shrink-0 text-[9px] uppercase tracking-wider text-muted-foreground">
+   910→            Verify
+   911→          </span>
+   912→          <ScoreBar value={op.verificationScore} kind="verification" />
+   913→        </div>
+   914→        <div className="ml-auto flex items-center gap-3 text-[10px] text-muted-foreground">
+   915→          <span className="tabular-nums" title="Estimated effort">
+   916→            {op.estimatedHours > 0 ? `${op.estimatedHours.toFixed(1)}h est.` : "—"}
+   917→          </span>
+   918→          <span className="tabular-nums" title={`Difficulty ${op.difficulty}/10 · competition ${op.competition}/10`}>
+   919→            D{op.difficulty} · C{op.competition}
+   920→          </span>
+   921→        </div>
+   922→      </div>
+   923→    </div>
+   924→  );
+   925→}
+   926→

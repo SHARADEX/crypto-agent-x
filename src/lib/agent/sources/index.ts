@@ -357,6 +357,9 @@ export async function runDiscoveryCycleV2(): Promise<DiscoverySummary> {
         paymentMethod: op.paymentMethod,
         paymentVerified: false,
         sourceVerified: false,
+        // v0.4.1 watchlist fields — new opportunities start unwatched.
+        watched: false,
+        watchedAt: null,
         riskScore: 0,
         verificationScore: 0,
         confidence: 0,

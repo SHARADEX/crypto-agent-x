@@ -100,6 +100,22 @@ export async function execute(input: AgentInput): Promise<AgentOutput> {
         },
         { taskId, opportunityId }
       );
+      // The action already completed — if it was a real GitHub PR, make sure
+      // the opportunity reflects the "submitted" state so the PR monitor
+      // picks it up (and so a re-dispatch can't loop the execution agent).
+      if (existing.externalRef?.startsWith("github-pr:")) {
+        await db.opportunity
+          .update({
+            where: { id: opportunityId },
+            data: { status: "submitted" },
+          })
+          .catch((err) => {
+            console.error(
+              "[execution-agent] idempotent-skip status sync failed:",
+              err
+            );
+          });
+      }
       return ok(
         {
           action,
@@ -475,9 +491,15 @@ async function dispatchToRealAdapter(
 
   // --- 4. Persist the result on the IdempotencyRecord + Task output --------
   const externalRef = result.externalRef;
-  const nextStatus: "executed" | "failed" =
+  // Real-submission SUCCESS means the deliverable is now SUBMITTED to the
+  // external platform (the pull request is open). The PR monitor watches
+  // "submitted" opportunities and transitions them to awaiting_payment
+  // (merged) / needs_improvement (changes requested) / failed (closed).
+  // (Previously "executed", which would re-trigger the review agent and
+  // loop the lifecycle.)
+  const nextStatus: "submitted" | "failed" =
     result.success && result.status !== "failed"
-      ? "executed"
+      ? "submitted"
       : "failed";
 
   try {
