@@ -711,16 +711,32 @@ function normaliseCodingOutput(parsed: Record<string, unknown>): NormalizedDeliv
 
   const testsRaw = Array.isArray(parsed.tests) ? parsed.tests : [];
   const tests: string[] = [];
-  // CodingSolutionOutline.tests is CodingTestFile[] — we summarise each.
+  // CodingSolutionOutline.tests is CodingTestFile[] — the test FILES are part
+  // of the deliverable (bounties routinely require "add comprehensive tests
+  // to tests/<file>"). Previously these were reduced to string summaries for
+  // the PR body and their CONTENT was dropped, so submissions shipped the
+  // source change without the required tests (observed: fibonacci PR #16
+  // carried only src/math_utils.py). Commit them alongside the source files.
   for (const t of testsRaw) {
     if (typeof t === "string") {
       tests.push(t);
-    } else if (typeof t === "object" && t !== null) {
-      const tf = t as Record<string, unknown>;
-      const framework = strField(tf, "framework") || "test";
-      const testPath = strField(tf, "path") || "(in-memory)";
-      tests.push(`${framework} suite at ${testPath}`);
+      continue;
     }
+    if (typeof t !== "object" || t === null) continue;
+    const tf = t as Record<string, unknown>;
+    const testPath = strField(tf, "path");
+    const testContent = strField(tf, "content");
+    if (testPath && testContent && !files.some((f) => f.path === testPath)) {
+      files.push({
+        path: testPath,
+        language: languageForPath(testPath),
+        content: testContent,
+      });
+    }
+    const framework = strField(tf, "framework") || "test";
+    tests.push(
+      `${framework} suite at ${testPath || "(in-memory)"}`
+    );
   }
   // If the parsed output includes a testResults block, surface that too.
   const testResults = parsed.testResults as Record<string, unknown> | undefined;
@@ -775,6 +791,33 @@ function normaliseWritingOutput(parsed: Record<string, unknown>): NormalizedDeli
   ];
 
   return { approach, files, tests };
+}
+
+/** Derive a language label from a file path (for committed test files). */
+function languageForPath(path: string): string {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  switch (ext) {
+    case "py":
+      return "python";
+    case "ts":
+      return "typescript";
+    case "tsx":
+      return "tsx";
+    case "js":
+    case "mjs":
+    case "cjs":
+      return "javascript";
+    case "jsx":
+      return "jsx";
+    case "go":
+      return "go";
+    case "rs":
+      return "rust";
+    case "java":
+      return "java";
+    default:
+      return "text";
+  }
 }
 
 function strField(obj: Record<string, unknown>, key: string): string {

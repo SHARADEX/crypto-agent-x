@@ -35,6 +35,7 @@ import {
 } from "@/lib/llm/registry";
 import { getCircuitBreaker } from "@/lib/llm/circuit-breaker";
 import { quotaTracker } from "@/lib/llm/quota-tracker";
+import { providerRegistry } from "@/lib/llm/provider-registry";
 import {
   isTaskEligibleCached,
   refreshCooldownCache,
@@ -232,6 +233,14 @@ export async function selectModel(
     // does, at route time (previously only checked at call time in
     // callLLM, causing wasted routing + fallback logic on every call).
     if (!isTaskEligibleCached(m.model_id, taskType)) continue;
+    // Provider-config gate: the provider-registry docstring claims the
+    // router consults it — now it actually does. A model on a provider
+    // whose credentials are missing / invalid / quota-exhausted can
+    // never succeed, so routing to it just burns the retry + reroute
+    // budget (observed: coding tasks routed to gemini-2.5-pro (coding
+    // 9.1) with NO GEMINI_API_KEY, failing 3× + 3 reroutes before
+    // giving up, while the healthy zai/glm-4.6 was never tried).
+    if (providerRegistry.isExcluded(m.provider)) continue;
 
     // Capabilities threshold check.
     const meetsCaps = requiredKeys.every(

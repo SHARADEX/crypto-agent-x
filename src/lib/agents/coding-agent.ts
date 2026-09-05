@@ -595,6 +595,28 @@ async function inspectRepoStructure(
     }
   }
 
+  // ALSO read existing SOURCE + TEST files (up to 6, 4 KB each). The
+  // deliverable must EXTEND these files (e.g. "add fibonacci to
+  // src/math_utils.py") — without their current contents the LLM
+  // regenerates them from scratch and silently DROPS the existing
+  // functions, which the review agent then correctly rejects (observed:
+  // fibonacci PR overwrote add/multiply → "all existing tests must
+  // continue to pass" violated).
+  const sourceLike = files
+    .filter(
+      (f) =>
+        /^(src|lib|tests?|app)\//.test(f) &&
+        /\.(py|ts|tsx|js|jsx|mjs|go|rs|java)$/.test(f)
+    )
+    .slice(0, 6);
+  for (const rel of sourceLike) {
+    const content = await workspace.readFile(rel);
+    if (content) {
+      const capped = content.length > 4096 ? content.slice(0, 4096) + "\n…[truncated]" : content;
+      readables.push(`--- ${rel} (EXISTING — extend, do not remove its contents) ---\n${capped}`);
+    }
+  }
+
   const summary = [
     `Files (first ${listed.length} of ${files.length}):`,
     tree,
@@ -735,6 +757,9 @@ async function callCodingLLM(
         "Rules:",
         "- Do NOT include shell commands, network exfiltration, or eval/Function calls.",
         "- Do NOT include hardcoded secrets / API keys / private keys.",
+        "- When a requirement says to ADD a function to an EXISTING file, return the",
+        "  FULL file content with the existing code PRESERVED plus your addition.",
+        "  NEVER drop existing functions/tests — 'all existing tests must continue to pass'.",
         "- The tests MUST pass on the first run; do NOT write tests that depend",
         "  on network access or env vars that are not set.",
         "- Keep code minimal but complete — no TODO stubs.",

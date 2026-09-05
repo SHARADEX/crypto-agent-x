@@ -102,6 +102,14 @@ export interface ExecOpts {
    * truncated with a `…[truncated]` marker.
    */
   maxStdoutBytes?: number;
+  /**
+   * Opt-out of the network-blocking proxy env for THIS exec. Only used by
+   * `gitClone()` — cloning the opportunity's validated upstream repo is an
+   * intentional, operator-visible network action (the same repo the PR
+   * adapter later submits to), not untrusted test code phoning home.
+   * Everything else (tests, installs, git diff/apply) stays hermetic.
+   */
+  allowNetwork?: boolean;
 }
 
 /** Result of `workspace.runTests()` — adds parsed pass/fail counts. */
@@ -474,25 +482,34 @@ export class CodingWorkspace {
     // BUT we strip any proxy overrides so callers cannot punch a hole
     // in the network boundary.
     //
+    // `opts.allowNetwork` (gitClone only) skips the blocking overrides so
+    // the ONE intentional clone can reach github.com. Everything else
+    // (tests, installs, patch application) remains hermetic.
+    //
     // Type annotation: `NodeJS.ProcessEnv` allows `undefined` values,
     // which `Record<string, string>` does not — `process.env` itself is
     // typed as `NodeJS.ProcessEnv`, so we use that here.
+    const networkBlockers: Record<string, string> = opts.allowNetwork
+      ? {}
+      : {
+          // Network-blocking overrides — these take precedence.
+          HTTP_PROXY: "http://127.0.0.1:1",
+          http_proxy: "http://127.0.0.1:1",
+          HTTPS_PROXY: "http://127.0.0.1:1",
+          https_proxy: "http://127.0.0.1:1",
+          ALL_PROXY: "http://127.0.0.1:1",
+          all_proxy: "http://127.0.0.1:1",
+          // Only allow localhost to bypass — nothing else.
+          NO_PROXY: "localhost,127.0.0.1,::1",
+          no_proxy: "localhost,127.0.0.1,::1",
+          // Belt-and-braces: disable any outbound DNS resolution by sending
+          // the resolver at a non-existent port. Some tools use this env.
+          RES_OPTIONS: "attempts:0 timeout:0",
+        };
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...opts.env,
-      // Network-blocking overrides — these take precedence.
-      HTTP_PROXY: "http://127.0.0.1:1",
-      http_proxy: "http://127.0.0.1:1",
-      HTTPS_PROXY: "http://127.0.0.1:1",
-      https_proxy: "http://127.0.0.1:1",
-      ALL_PROXY: "http://127.0.0.1:1",
-      all_proxy: "http://127.0.0.1:1",
-      // Only allow localhost to bypass — nothing else.
-      NO_PROXY: "localhost,127.0.0.1,::1",
-      no_proxy: "localhost,127.0.0.1,::1",
-      // Belt-and-braces: disable any outbound DNS resolution by sending
-      // the resolver at a non-existent port. Some tools use this env.
-      RES_OPTIONS: "attempts:0 timeout:0",
+      ...networkBlockers,
       // Disable npm/yarn telemetry + funding prompts (saves network
       // attempts that would have been silently blocked anyway).
       npm_config_audit: "false",
@@ -641,7 +658,11 @@ export class CodingWorkspace {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS;
     return this.exec(
       ["git", "clone", "--depth", String(depth), validation.normalized, "."],
-      { timeoutMs }
+      // allowNetwork: the clone target is a validateUrl-approved github.com
+      // URL supplied by the opportunity — the ONE deliberate outbound call
+      // the coding workspace makes (the PR adapter later submits to the same
+      // repo). All other workspace execs stay behind the proxy boundary.
+      { timeoutMs, allowNetwork: true }
     );
   }
 
