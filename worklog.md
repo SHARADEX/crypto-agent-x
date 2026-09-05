@@ -939,3 +939,144 @@ Root-cause chain (verified via /tmp/boot-timeline.log + /start.sh):
 5. **[LOW] The `.env` GITHUB_TOKEN status**: still empty after recovery
    (expected — the operator never pasted it; the Connect CTA remains the
    guided path).
+
+# PART 14 — ROUND 11 (Task ID: 11 — GitHub delivery + FIRST TASK COMPLETED, 2026-09-05, ~10:30–11:15 UTC)
+
+## Context / operator request
+Operator added GITHUB_TOKEN (ghp_…, 40 chars) to .env and asked to
+(1) put the system on GitHub and (2) help the agent complete its first
+task. Token identity: **SHARADEX** (scopes: repo + workflow).
+
+## A. System pushed to GitHub — SHARADEX/crypto-agent-x
+- Worklog's old target SHARADEX2/cryptoearn-agent → 404 (never existed
+  under this account). The operator created an EMPTY repo
+  `SHARADEX/crypto-agent-x` minutes before asking — used as destination.
+- **Push protection incident**: first push REJECTED (GH013) — secret
+  scanner flagged a Stripe key pattern in
+  `upload/extracted/tests/unit/code-safety.test.ts:61` (the v0.3.0
+  template's own TEST FIXTURE: a fake `sk_live_…` key used to verify the
+  safety detector flags hardcoded keys — false positive, but push
+  protection blocks regardless).
+- Resolution: untracked the whole stale `upload/` duplicate (388 files)
+  + `tool-results/` + `skills/` (gitignored), untracked `.env` (token
+  hygiene; history only ever held DATABASE_URL — verified), added
+  `.env.example`, and RESET history to a single clean orphan commit
+  (46b2ac6) — old main preserved as `local-history-backup`.
+- Remote: `origin` = https URL; pushurl embeds token (local-only config
+  in .git/config, same trust domain as .env). `git push` just works now.
+- **CI on GitHub (agent-ci.yml active, runs on push)**:
+  - run1 failed at Typecheck — pre-existing: @types/diff@8 is an EMPTY
+    STUB for diff@5.2.0 (TS2688 aborted every typecheck; the diff package
+    is directly imported by iteration-service.ts). Fixed: pinned
+    `@types/diff@^5.0.9` + explicit `diff` dep.
+  - more pre-existing type errors unmasked: missing watched/watchedAt on
+    Opportunity literals (sources/index.ts, mock-simulation.ts), string
+    →enum casts in serialize.ts, duplicate-decl collisions with
+    upload/extracted copies. Fixed all; tsconfig now excludes
+    upload/ skills/ examples/ (untracked/demos, socket.io not installed).
+  - run2 failed at "Run tests" — this deployment ships WITHOUT the
+    upstream test suite (tests/ holds only runtime .sh scripts; `bun
+    test` exits 1 on zero matches). Workflow now skips with ::notice::.
+  - scheduled-cycle-without-DATABASE_URL: was ::error:: + exit 1 (red X
+    every 4h); now ::notice:: + DORMANT_NO_DATABASE_URL skip (green,
+    dormant-by-design, instructions logged).
+
+## B. THE AGENT'S FIRST TASK — COMPLETED END-TO-END ✅
+Target: "[Bounty] Add fibonacci function with edge case handling" ($50,
+opportunity cmtmr32lv003qsgwdih4x1h8d, approval cmtmtkgvd00k…).
+
+### Data + state prep
+- **sourceUrl fix**: was bounty-plaza#976 (aggregator) → set to
+  https://github.com/gougousongsong/abk-coding-test/issues/1 (the REAL
+  task repo per the bounty's "原始链接" field) so the coding agent clones
+  the right repo and the PR adapter submits to the right place.
+- Approval decided: approve (operator) — row status "approved".
+- agentState.running was false → set true (mirrors dashboard Start).
+
+### FOUR root-cause bugs fixed to make real submission actually work
+1. **LLM router picked unconfigured providers** — selectModel ranked
+   gemini/gemini-2.5-pro highest (coding 9.1) but gemini has NO API key
+   in this sandbox; every coding call burned 3 retries + 3 reroutes then
+   gave up ("llm_call_exhausted_retries") while healthy zai/glm-4.6
+   (coding 9.0) was never tried. The provider-registry docstring claimed
+   the router consulted it — it didn't. Fix: selectModel now skips
+   `providerRegistry.isExcluded(m.provider)` (not_configured /
+   invalid_credentials / quota_exhausted).
+2. **Workspace network block killed git clone** — the coding workspace
+   exec FORCE-sets all proxies to 127.0.0.1:1 (hermetic sandbox design)
+   so `git clone` ALWAYS failed (exit 128 "Could not connect to server")
+   and every coding task ran in an EMPTY workspace (matches the Sep-4
+   failures: "npm error Could not read package.json"). Fix:
+   `exec({allowNetwork})` opt-out used ONLY by gitClone() (validated
+   github.com URL, the same repo the PR adapter later submits to);
+   tests/installs/patches stay hermetic.
+3. **Repo inspection never showed source files** — only
+   package.json/README/pyproject were read, so the LLM regenerated
+   src/math_utils.py from scratch and DROPPED add/multiply (review
+   agent correctly REJECTED: "all existing tests must continue to
+   pass"). Fix: inspection now includes src/lib/tests source files
+   (≤6, 4KB each, labeled "EXISTING — extend, do not remove") + prompt
+   rule "return FULL file content with existing code PRESERVED".
+4. **Test files were never committed to the PR** —
+   normaliseCodingOutput reduced CodingTestFile[] to string summaries
+   for the PR body and dropped the CONTENT (PR #16 shipped only
+   src/math_utils.py without the required tests → closed it with an
+   explanatory comment, superseded). Fix: test files now join
+   deliverable.files (languageForPath helper).
+
+### Pipeline wiring (the execution agent was UNREACHABLE before)
+- decideNextSpecialist routes status "approved" → execution agent, but
+  NOTHING ever produced "approved": review-accept jumped straight to
+  "submitted" (simulated). Fix: review accept → "approved" when
+  realPrSubmissionEligible (github-pr adapter + GITHUB_TOKEN + !MOCK);
+  execution agent runs, opens the PR, sets "submitted" itself.
+- selectNextOpportunity mid-flight list now includes "queued"
+  (crash-orphaned queued opportunities were never selectable again).
+- Dispatch loop breaks on execution gate blocks (allowed=false /
+  skipped=true) instead of spinning 8 Tasks.
+- Execution success now sets "submitted" (was "executed" → review loop);
+  idempotent-skip syncs github-pr refs back to "submitted" for the PR
+  monitor.
+
+### Result — verified LIVE
+- **PR #17 OPEN**: https://github.com/gougousongsong/abk-coding-test/pull/17
+  from fork SHARADEX/abk-coding-test, branch cryptoearn-bot/1-1788606532751.
+  Files: src/math_utils.py (+26 −0, add/multiply PRESERVED, fibonacci with
+  ValueError edge case) AND tests/test_math_utils.py (+20 −1, import
+  extended, test_fibonacci normal + edge cases). Body: "Fixes #1" +
+  Approach + test results (5/5 pytest) + AI disclosure. PR #16 (pre-fix,
+  tests missing) closed with comment — superseded.
+- run-first-task.ts steps: coding (clone + 5/5 pytest, 1 iteration) →
+  review accept → approved (real PR path) → execution success →
+  **finalStatus: submitted**.
+- Dashboard verified via agent-browser: pipeline funnel "Submitted: 1",
+  opportunity sheet "Submitted · Awaiting PR Merge · $50.00", event log
+  shows execution_adapter_selected → submission_attempt →
+  submission_complete → execution_completed. 0 browser errors, 0 console
+  errors. Screenshots: qa/first-task-*.png.
+- The PR monitor (monitorSubmittedPRs, runs each cycle) now watches PR
+  #17: merged → awaiting_payment → payment verification; closed → failed;
+  changes_requested → needs_improvement.
+
+## C. Verification results
+- lint clean; `tsc --noEmit` clean (first time in this deployment).
+- Dev server healthy throughout (port 3000, 0 errors in dev.log during
+  the runs); agent-browser QA clean (desktop + sheet interactions).
+- Remaining pending approvals: 3 (ESP grant [mock, failed], ttnn
+  $1,000 [sourceUrl ALSO points at bounty-plaza — needs the same data
+  fix + a hard C++ task], radar $0).
+
+## D. Unresolved / next-phase priorities
+1. [HIGH] Watch PR #17 for maintainer action; the PR monitor + payment
+   agent handle merge → payout verification. If changes_requested →
+   the improvement loop (approve/rework flow) is the operator path.
+2. [MED] ttnn bounty ($1,000): same sourceUrl pattern (bounty-plaza#973
+   → real tt-metal issue) but a genuinely hard C++ gradients fix —
+   decide whether to attempt or reject as out-of-depth.
+3. [MED] CI: confirm the post-fix runs green (typecheck+tests+sim);
+   the ephemeral mock-sim path still exercises the OLD simulated
+   transitions (mock-mode skips the new real-PR wiring — by design).
+4. [LOW] Sidebar approvals badge shows 1 while /api/approvals returns
+   3 pending — investigate the badge's counting filter.
+5. [LOW] Scripts kept: scripts/run-first-task.ts (operator "drive one
+   opportunity" utility — typechecked, lint-clean).
