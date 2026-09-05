@@ -1,0 +1,211 @@
+# =============================================================================
+# CryptoEarn Agent — Continuous Integration + Scheduled Autonomy
+# =============================================================================
+# Phase 3.2: Production uses DATABASE_URL from GitHub Secrets (PostgreSQL).
+# CI test/simulate steps use ephemeral SQLite (file:/tmp/...) — no persistence.
+# The scheduled autonomous cycle uses DATABASE_URL from GitHub Secrets.
+# If DATABASE_URL is not set, the autonomous cycle ABORTS (no ephemeral fallback).
+# =============================================================================
+name: CryptoEarn Agent CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_cycle:
+        description: "Run one autonomous cycle after checks"
+        type: boolean
+        default: false
+  schedule:
+    # Every 4 hours at :00 UTC
+    - cron: "0 */4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # ---------------------------------------------------------------------------
+      # Generate Prisma client + push CI schema (ephemeral SQLite for tests).
+      # Uses the DEV schema (SQLite) — NOT the production schema (PostgreSQL).
+      # ---------------------------------------------------------------------------
+      - name: Generate Prisma client (dev/SQLite)
+        run: bun run db:generate
+        env:
+          DATABASE_URL: "file:/tmp/cryptoearn-ci.db"
+
+      - name: Push CI database schema (ephemeral SQLite)
+        run: bun run db:push
+        env:
+          DATABASE_URL: "file:/tmp/cryptoearn-ci.db"
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      # ---------------------------------------------------------------------------
+      # Secret validation — prints ✅/⚠️ per secret WITHOUT revealing values.
+      # Uses the ephemeral CI DB.
+      # ---------------------------------------------------------------------------
+      - name: Validate secrets
+        env:
+          DATABASE_URL: "file:/tmp/cryptoearn-ci.db"
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: bun run agent:health
+
+      # ---------------------------------------------------------------------------
+      # Mock simulation — deterministic full-lifecycle run (ephemeral DB).
+      # ---------------------------------------------------------------------------
+      - name: Mock simulation
+        env:
+          DATABASE_URL: "file:/tmp/cryptoearn-sim.db"
+          MOCK_MODE: "true"
+        run: |
+          bun run db:push
+          bun run agent:simulate
+
+      # ---------------------------------------------------------------------------
+      # Test suite — unit + integration + e2e (ephemeral DB).
+      # ---------------------------------------------------------------------------
+      - name: Run tests
+        env:
+          DATABASE_URL: "file:/tmp/cryptoearn-test.db"
+          MOCK_MODE: "true"
+        run: bun test tests/
+
+      # ---------------------------------------------------------------------------
+      # Health check (ephemeral CI DB + real provider keys if configured).
+      # ---------------------------------------------------------------------------
+      - name: Health check
+        env:
+          DATABASE_URL: "file:/tmp/cryptoearn-ci.db"
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: bun run agent:health
+
+      # ---------------------------------------------------------------------------
+      # Autonomous cycle (scheduled / manual only) — uses PRODUCTION DATABASE_URL
+      # from GitHub Secrets. State persists across runs via the real database.
+      # Phase 3.2 §4: NO ephemeral fallback. If DATABASE_URL is not configured,
+      # the autonomous cycle ABORTS SAFELY with a clear error message.
+      # ---------------------------------------------------------------------------
+      - name: Check production DATABASE_URL
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_cycle)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not configured. The autonomous cycle cannot run without a persistent production database."
+            echo "::error::Set DATABASE_URL in GitHub Settings → Secrets → Actions to a PostgreSQL connection string."
+            echo "::error::Example: postgresql://user:pass@ep-xxx.aws.neon.tech/dbname?sslmode=require"
+            echo "::error::The autonomous cycle is ABORTED to prevent running against ephemeral storage."
+            exit 1
+          fi
+          echo "✅ DATABASE_URL is configured (value hidden)."
+
+      - name: Autonomous cycle (production DB)
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_cycle)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Strategy allocation env vars (Phase-3 §17).
+          STRATEGY_BOUNTY_ALLOCATION: ${{ secrets.STRATEGY_BOUNTY_ALLOCATION }}
+          STRATEGY_FREELANCE_ALLOCATION: ${{ secrets.STRATEGY_FREELANCE_ALLOCATION }}
+          STRATEGY_HACKATHON_ALLOCATION: ${{ secrets.STRATEGY_HACKATHON_ALLOCATION }}
+          STRATEGY_GRANT_ALLOCATION: ${{ secrets.STRATEGY_GRANT_ALLOCATION }}
+          STRATEGY_CONTRIBUTION_ALLOCATION: ${{ secrets.STRATEGY_CONTRIBUTION_ALLOCATION }}
+          STRATEGY_BUILD_ONCE_ALLOCATION: ${{ secrets.STRATEGY_BUILD_ONCE_ALLOCATION }}
+          MAX_ITERATIONS_PER_TASK: ${{ secrets.MAX_ITERATIONS_PER_TASK }}
+          # LLM provider keys.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          # Search providers.
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+          # GitHub token for real PR submission adapters.
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Use the production schema (PostgreSQL) when DATABASE_URL is a postgresql:// URL.
+          if [[ "$DATABASE_URL" == postgresql://* ]]; then
+            bun run db:push:prod
+          else
+            bun run db:push
+          fi
+          bun run agent:cycle
+
+      # ---------------------------------------------------------------------------
+      # Artifacts — logs.
+      # ---------------------------------------------------------------------------
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-logs
+          path: |
+            dev.log
+            server.log
+          if-no-files-found: ignore
+          retention-days: 7

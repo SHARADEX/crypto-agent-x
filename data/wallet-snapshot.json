@@ -1,0 +1,56 @@
+{
+  "fetchedAt": "2026-09-04T11:24:12.970Z",
+  "wallets": [
+    {
+      "label": "Ronin Wallet",
+      "chain": "ronin",
+      "address": "0xAa4E76e5Be5334c0f2Fe0716C42B2FC61D4c150B",
+      "nativeBalance": 0,
+      "nativeSymbol": "RON",
+      "usdValue": 0,
+      "tokens": [],
+      "fetchedAt": "2026-09-04T11:24:12.543Z"
+    },
+    {
+      "label": "MetaMask (EVM) Wallet",
+      "chain": "ethereum",
+      "address": "0xd6DFE6b54bF3dBC919Fde57009452fe6bbb0D997",
+      "nativeBalance": 0,
+      "nativeSymbol": "ETH",
+      "usdValue": 0,
+      "tokens": [],
+      "fetchedAt": "2026-09-04T11:24:12.544Z"
+    },
+    {
+      "label": "Bitcoin Wallet",
+      "chain": "bitcoin",
+      "address": "bc1qh3areygq598ntxht0yp5yv87ej7g6aqvw8fl4z",
+      "nativeBalance": 0,
+      "nativeSymbol": "BTC",
+      "usdValue": 0,
+      "tokens": [],
+      "fetchedAt": "2026-09-04T11:24:12.544Z"
+    },
+    {
+      "label": "Solana Wallet",
+      "chain": "solana",
+      "address": "2emXSLoziaB5wdC8y48ovbu41agh9PzR5ro8o7kRDUvM",
+      "nativeBalance": 0,
+      "nativeSymbol": "SOL",
+      "usdValue": 0,
+      "tokens": [],
+      "fetchedAt": "2026-09-04T11:24:12.544Z"
+    },
+    {
+      "label": "Tron Wallet",
+      "chain": "tron",
+      "address": "TJxkyJW57Tb8qmvvv5rCh3L2FYssRvWFEv",
+      "nativeBalance": 0,
+      "nativeSymbol": "TRX",
+      "usdValue": 0,
+      "tokens": [],
+      "fetchedAt": "2026-09-04T11:24:12.545Z"
+    }
+  ],
+  "totalUsd": 0
+}

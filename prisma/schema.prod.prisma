@@ -1,0 +1,457 @@
+// =============================================================================
+// prisma/schema.prod.prisma — PRODUCTION schema (PostgreSQL).
+//
+// This schema is IDENTICAL to prisma/schema.prisma except the datasource
+// provider is "postgresql" instead of "sqlite". The model definitions are
+// copy-pasted (not imported) to keep Prisma happy — Prisma doesn't support
+// cross-file model imports.
+//
+// Usage:
+//   DATABASE_URL="postgresql://..." bunx prisma db push --schema=prisma/schema.prod.prisma --accept-data-loss
+//   DATABASE_URL="postgresql://..." bunx prisma generate --schema=prisma/schema.prod.prisma
+//
+// For LOCAL + TEST, use the default schema.prisma:
+//   DATABASE_URL="file:./db/custom.db" bun run db:push
+//
+// The setup-prisma-provider.mjs script has been REMOVED — it corrupted the
+// checked-in schema.prisma by rewriting the provider line in place. This
+// two-file approach is simpler and doesn't mutate source files.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Core lifecycle state
+// ---------------------------------------------------------------------------
+
+/// Canonical normalized opportunity (spec §5, §6, §7, §8, §9).
+model Opportunity {
+  id              String   @id @default(cuid())
+  canonicalId     String   @unique
+  title           String
+  description     String
+  source          String
+  sourceUrl       String
+  organization    String
+  category        String
+  rewardAmount    Float
+  rewardCurrency  String
+  rewardUsd       Float
+  deadline        DateTime?
+  requirements    String
+  skillsRequired  String
+  estimatedHours  Float
+  difficulty      Int
+  competition     Int
+  eligibility     String
+  paymentMethod   String
+  paymentVerified Boolean  @default(false)
+  sourceVerified  Boolean  @default(false)
+  capitalRequired Boolean  @default(false)
+  riskScore       Int      @default(0)
+  verificationScore Int    @default(0)
+  confidence      Float    @default(0)
+  status          String   @default("discovered")
+  expectedValue   Float    @default(0)
+  expectedHourly  Float    @default(0)
+  riskAdjustedHourly Float @default(0)
+  dedupHash       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tasks           Task[]
+  earnings        Earning[]
+  transactions    Transaction[]
+  approvals       Approval[]
+  events          AgentEvent[]
+
+  @@index([status])
+  @@index([category])
+  @@index([source])
+}
+
+model Task {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  parentTaskId    String?
+  fromAgent       String
+  toAgent         String
+  objective       String
+  input           String
+  output          String?
+  status          String   @default("pending")
+  riskLevel       String   @default("low")
+  executionLevel  Int      @default(0)
+  modelId         String?
+  tokensUsed      Int      @default(0)
+  latencyMs       Int      @default(0)
+  qualityScore    Float?
+  iterationCount  Int      @default(0)
+  maxIterations   Int      @default(6)
+  currentIterationId String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  events          AgentEvent[]
+  iterations      TaskIteration[]
+
+  @@index([opportunityId])
+  @@index([status])
+  @@index([toAgent])
+}
+
+model TaskIteration {
+  id              String   @id @default(cuid())
+  taskId          String
+  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  iterationNumber Int
+  version         String
+  artifactJson    String
+  feedbackId      String?
+  feedbackText    String?
+  feedbackType    String?
+  feedbackPriority String?
+  modelId         String?
+  agentName       String?
+  qualityScore    Float?
+  testResults     String?
+  securityResults String?
+  status          String   @default("created")
+  tokensUsed      Int      @default(0)
+  timeSpentMs     Int      @default(0)
+  estimatedValueAdded Float? @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([taskId])
+  @@index([status])
+}
+
+model Earning {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  source          String
+  category        String
+  grossUsd        Float
+  feesUsd         Float    @default(0)
+  expensesUsd    Float    @default(0)
+  netUsd          Float
+  hoursSpent      Float    @default(0)
+  hourlyReturn    Float    @default(0)
+  currency        String   @default("USDC")
+  verified        Boolean  @default(false)
+  expected        Boolean  @default(false)
+  transactionHash String?
+  chain           String?
+  strategy        String?
+  createdAt       DateTime @default(now())
+
+  @@index([opportunityId])
+  @@index([verified])
+  @@index([strategy])
+}
+
+model Transaction {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  chain           String
+  txHash          String
+  fromAddress     String?
+  toAddress       String?
+  amount          Float
+  currency        String
+  usdValue        Float
+  tokenContract   String?
+  blockTimestamp  DateTime?
+  confirmations   Int      @default(0)
+  direction       String   @default("incoming")
+  matched         Boolean  @default(false)
+  verificationStatus String @default("unverified")
+  createdAt       DateTime @default(now())
+
+  @@unique([chain, txHash])
+  @@index([toAddress])
+  @@index([opportunityId])
+}
+
+model StrategyStat {
+  id              String   @id @default(cuid())
+  strategy        String   @unique
+  discovered      Int      @default(0)
+  rejected        Int      @default(0)
+  attempted       Int      @default(0)
+  completed       Int      @default(0)
+  failed          Int      @default(0)
+  totalGrossUsd   Float    @default(0)
+  totalNetUsd     Float    @default(0)
+  totalHours      Float    @default(0)
+  avgHourly       Float    @default(0)
+  successRate     Float    @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+model StrategyAllocation {
+  id              String   @id @default(cuid())
+  family          String   @unique
+  displayName     String
+  targetAllocation Float
+  minAllocation   Float    @default(0)
+  maxAllocation   Float    @default(100)
+  disabled        Boolean  @default(false)
+  scanFrequency   String   @default("medium")
+  lastRebalancedAt DateTime?
+  rebalanceReason String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  changeLogs      StrategyAllocationChangeLog[]
+}
+
+model StrategyAllocationChangeLog {
+  id              String   @id @default(cuid())
+  family          String
+  allocation      StrategyAllocation? @relation(fields: [family], references: [family], onDelete: Cascade)
+  previousAllocation Float
+  newAllocation      Float
+  reason          String
+  triggeredBy     String
+  createdAt       DateTime @default(now())
+
+  @@index([family])
+  @@index([createdAt])
+}
+
+model SourceReputation {
+  id              String   @id @default(cuid())
+  source          String   @unique
+  reliability     Int      @default(50)
+  successfulOps   Int      @default(0)
+  fakeOps         Int      @default(0)
+  deadLinks       Int      @default(0)
+  paymentFailures Int      @default(0)
+  scamDetections  Int      @default(0)
+  avgRewardUsd    Float    @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+model DiscoveredSource {
+  id              String   @id @default(cuid())
+  urlHash         String   @unique
+  url             String
+  host            String
+  organization    String   @default("")
+  sourceScore     Int      @default(0)
+  rewardMechanism String   @default("")
+  capitalRequired String   @default("none")
+  kycRequired     String   @default("unknown")
+  details         String   @default("{}")
+  status          String   @default("pending")
+  reason          String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([host])
+}
+
+model ModelRecord {
+  id              String   @id @default(cuid())
+  modelId         String   @unique
+  provider        String
+  apiType         String
+  enabled         Boolean  @default(true)
+  role            String   @default("primary")
+  status          String   @default("healthy")
+  capabilitiesJson String
+  performanceJson String
+  limitsJson      String
+  earningsContribUsd Float @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+model ModelPerformance {
+  id              String   @id @default(cuid())
+  modelId         String
+  taskType        String
+  attempts        Int      @default(0)
+  successes       Int      @default(0)
+  failures        Int      @default(0)
+  avgLatencyMs    Int      @default(0)
+  avgTokens       Int      @default(0)
+  avgQuality      Float    @default(0)
+  earningsUsd     Float    @default(0)
+  updatedAt       DateTime @updatedAt
+
+  @@unique([modelId, taskType])
+}
+
+model Approval {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  taskId          String?
+  riskLevel       String
+  executionLevel  Int
+  reason          String
+  status          String   @default("pending")
+  feedback        String?
+  feedbackType    String?
+  feedbackPriority String?
+  feedbackTargetAreas String?
+  decidedAt       DateTime?
+  decidedBy       String?
+  createdAt       DateTime @default(now())
+
+  @@index([status])
+  @@index([opportunityId])
+}
+
+model IdempotencyRecord {
+  id              String   @id @default(cuid())
+  executionId     String   @unique
+  opportunityId   String?
+  action          String
+  externalRef     String?
+  status          String   @default("pending")
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  @@index([opportunityId])
+  @@index([action])
+}
+
+model AgentEvent {
+  id              String   @id @default(cuid())
+  taskId          String?
+  task            Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  agent           String
+  level           String   @default("info")
+  event           String
+  payload         String
+  createdAt       DateTime @default(now())
+
+  @@index([agent])
+  @@index([level])
+  @@index([createdAt])
+}
+
+model BreakerState {
+  id              String   @id @default(cuid())
+  modelId         String   @unique
+  status          String   @default("healthy")
+  failureCount    Int      @default(0)
+  blacklistUntil  DateTime?
+  lastFailureAt   DateTime?
+  lastSuccessAt   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model AgentMemory {
+  id              String   @id @default(cuid())
+  category        String
+  title           String
+  body            String
+  payload         String?
+  tags            String   @default("[]")
+  confidence      Float    @default(0.5)
+  timesApplied    Int      @default(0)
+  superseded      Boolean  @default(false)
+  opportunityId   String?
+  agent           String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([category])
+  @@index([tags])
+  @@index([superseded])
+  @@index([createdAt])
+}
+
+model TaskCooldown {
+  id                  String   @id @default(cuid())
+  modelId             String
+  taskType            String
+  consecutiveFailures Int      @default(0)
+  cooldownUntil       DateTime?
+  lastFailureAt       DateTime?
+  lastSuccessAt       DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([modelId, taskType])
+  @@index([cooldownUntil])
+}
+
+model BudgetUsage {
+  id              String   @id @default(cuid())
+  period          String
+  llmRequests     Int      @default(0)
+  llmTokens       Int      @default(0)
+  webRequests     Int      @default(0)
+  rpcRequests     Int      @default(0)
+  executionTimeMs Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([period])
+}
+
+model AgentState {
+  id              String   @id @default("singleton")
+  running         Boolean  @default(false)
+  paused          Boolean  @default(false)
+  emergencyStop   Boolean  @default(false)
+  autonomyMode    String   @default("observe")
+  lastCycleAt     DateTime?
+  lastCycleResult String?
+  cycleCount      Int      @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+model LifecycleSnapshot {
+  id              String   @id @default(cuid())
+  bucket          String
+  status          String
+  count           Int
+  maxHoursInStatus Float
+  avgHoursInStatus Float
+  trueAvgHoursInStatus Float?
+  createdAt       DateTime @default(now())
+
+  @@unique([bucket, status])
+  @@index([bucket])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,516 @@
+// =============================================================================
+// prisma/schema.prisma — LOCAL + TEST schema (SQLite).
+//
+// This is the DEFAULT schema. It uses SQLite for local development + tests.
+// The provider is hardcoded to "sqlite" — it is NOT rewritten at runtime.
+//
+// For PRODUCTION (PostgreSQL), use prisma/schema.prod.prisma instead:
+//   PRISMA_SCHEMA=prisma/schema.prod.prisma bun run db:push
+//
+// The model definitions are identical across both schemas — only the
+// datasource provider differs. This file is the source of truth for the
+// model definitions; schema.prod.prisma imports them via the same content.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Core lifecycle state
+// ---------------------------------------------------------------------------
+
+/// Canonical normalized opportunity (spec §5, §6, §7, §8, §9).
+model Opportunity {
+  id              String   @id @default(cuid())
+  canonicalId     String   @unique // dedup key (spec §23)
+  title           String
+  description     String
+  source          String   // e.g. "github", "mock", "hackathon"
+  sourceUrl       String
+  organization    String
+  category        String   // bounty | hackathon | freelance | docs | grant | ...
+  rewardAmount    Float
+  rewardCurrency  String
+  rewardUsd       Float
+  deadline        DateTime?
+  requirements    String   // JSON array
+  skillsRequired  String   // JSON array
+  estimatedHours  Float
+  difficulty      Int      // 1..10
+  competition     Int      // 1..10
+  eligibility     String   // JSON array
+  paymentMethod   String
+  paymentVerified Boolean  @default(false) // spec §6 — payment pathway verified
+  sourceVerified  Boolean  @default(false) // spec §6 — source URL + org authenticity verified
+  capitalRequired Boolean  @default(false)
+  riskScore       Int      @default(0)   // 0..100 (scam detection)
+  verificationScore Int    @default(0)    // 0..100 (source authenticity)
+  confidence      Float    @default(0)    // 0..1
+  status          String   @default("discovered")
+  // discovered | researching | verified | rejected | queued | planning
+  // approved | executing | executed | submitted | awaiting_payment
+  // needs_improvement | paid | failed
+  //
+  // Phase-3 fix (Issue 10): "submitted" = PR opened, awaiting review/merge.
+  // The orchestrator transitions executed → submitted (not executed →
+  // awaiting_payment). The PR monitor transitions submitted →
+  // awaiting_payment ONLY when the PR is actually merged.
+  expectedValue   Float    @default(0)
+  expectedHourly  Float    @default(0)
+  riskAdjustedHourly Float @default(0)
+  dedupHash       String?
+  // Operator watchlist (v0.4.1): star/pin an opportunity for later review
+  // during daily check-ins. Pure UI-state — never influences agent scoring.
+  watched         Boolean  @default(false)
+  watchedAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tasks           Task[]
+  earnings        Earning[]
+  transactions    Transaction[]
+  approvals       Approval[]
+  events          AgentEvent[]
+
+  @@index([status])
+  @@index([category])
+  @@index([source])
+}
+
+/// A unit of work performed by a specialist agent (spec §4M handoff protocol).
+model Task {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  parentTaskId    String?
+  fromAgent       String
+  toAgent         String
+  objective       String
+  input           String   // JSON
+  output          String?  // JSON
+  status          String   @default("pending")
+  // pending | running | success | failed | skipped | cancelled
+  riskLevel       String   @default("low") // read | low | moderate | high
+  executionLevel  Int      @default(0)     // 0..3 (spec §11)
+  modelId         String?
+  tokensUsed      Int      @default(0)
+  latencyMs       Int      @default(0)
+  qualityScore    Float?
+  // Iteration tracking (Phase 3 §7, §8, §9) — how many improvement rounds
+  // this task has been through, the configurable cap, and a link to the
+  // latest TaskIteration row.
+  iterationCount  Int      @default(0)
+  maxIterations   Int      @default(6)
+  currentIterationId String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  events          AgentEvent[]
+  iterations      TaskIteration[]
+
+  @@index([opportunityId])
+  @@index([status])
+  @@index([toAgent])
+}
+
+/// A single iteration of a task (Phase 3 §7, §8, §9).
+model TaskIteration {
+  id              String   @id @default(cuid())
+  taskId          String
+  task            Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  iterationNumber Int      // 0 = initial, 1 = first improvement, etc.
+  version         String   // "v0", "v1", "v2", ...
+  // The artifact snapshot — what was produced in this iteration.
+  artifactJson    String   // JSON: { approach, files, tests, diff, safety }
+  // Feedback that triggered this iteration (null for v0).
+  feedbackId      String?  // links to the Approval that requested this iteration
+  feedbackText    String?  // the human's feedback text
+  feedbackType    String?
+  feedbackPriority String?
+  // Model + agent info.
+  modelId         String?
+  agentName       String?
+  // Quality metrics for this iteration.
+  qualityScore    Float?
+  testResults     String?  // JSON: { passed, failed, output }
+  securityResults String?  // JSON: { safe, riskScore, findings }
+  // Status: created | testing | reviewed | approved | rejected | superseded
+  status          String   @default("created")
+  // Economics (Phase 3 §10).
+  tokensUsed      Int      @default(0)
+  timeSpentMs     Int      @default(0)
+  estimatedValueAdded Float? @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([taskId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Economic engine + ledger (spec §8, §14)
+// ---------------------------------------------------------------------------
+
+/// A verified or expected earning entry (spec §14 — never mix the two).
+model Earning {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  source          String
+  category        String
+  grossUsd        Float
+  feesUsd         Float    @default(0)
+  expensesUsd    Float    @default(0)
+  netUsd          Float
+  hoursSpent      Float    @default(0)
+  hourlyReturn    Float    @default(0)
+  currency        String   @default("USDC")
+  verified        Boolean  @default(false)
+  expected        Boolean  @default(false) // EXPECTED vs VERIFIED (spec §14)
+  transactionHash String?
+  chain           String?
+  strategy        String?
+  createdAt       DateTime @default(now())
+
+  @@index([opportunityId])
+  @@index([verified])
+  @@index([strategy])
+}
+
+/// On-chain transactions observed on monitored wallets (spec §12, §13).
+model Transaction {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  chain           String   // ethereum | bitcoin | solana | tron | ronin | polygon | bsc ...
+  txHash          String
+  fromAddress     String?
+  toAddress       String?
+  amount          Float
+  currency        String
+  usdValue        Float
+  tokenContract   String?
+  blockTimestamp  DateTime?
+  confirmations   Int      @default(0)
+  direction       String   @default("incoming") // incoming | outgoing
+  matched         Boolean  @default(false) // matched to an expected payment?
+  verificationStatus String @default("unverified")
+  // unverified | matched | amount_mismatch | wrong_recipient | suspicious
+  createdAt       DateTime @default(now())
+
+  @@unique([chain, txHash])
+  @@index([toAddress])
+  @@index([opportunityId])
+}
+
+// ---------------------------------------------------------------------------
+// Strategy learning (spec §15, §16)
+// ---------------------------------------------------------------------------
+
+model StrategyStat {
+  id              String   @id @default(cuid())
+  strategy        String   @unique // github_bounty | hackathon | docs | freelance | ...
+  discovered      Int      @default(0)
+  rejected        Int      @default(0)
+  attempted       Int      @default(0)
+  completed       Int      @default(0)
+  failed          Int      @default(0)
+  totalGrossUsd   Float    @default(0)
+  totalNetUsd     Float    @default(0)
+  totalHours      Float    @default(0)
+  avgHourly       Float    @default(0)
+  successRate     Float    @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+/// Strategy family allocation (Phase 3 §17, §25, §26).
+model StrategyAllocation {
+  id              String   @id @default(cuid())
+  family          String   @unique // bounty | freelance | hackathon | grant | contribution | build_once | reward_program
+  displayName     String
+  targetAllocation Float
+  minAllocation   Float    @default(0)
+  maxAllocation   Float    @default(100)
+  disabled        Boolean  @default(false)
+  scanFrequency   String   @default("medium") // high | medium | low
+  lastRebalancedAt DateTime?
+  rebalanceReason String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  changeLogs      StrategyAllocationChangeLog[]
+}
+
+/// Allocation change log — every time a family's `targetAllocation` changes.
+model StrategyAllocationChangeLog {
+  id              String   @id @default(cuid())
+  family          String
+  allocation      StrategyAllocation? @relation(fields: [family], references: [family], onDelete: Cascade)
+  previousAllocation Float
+  newAllocation      Float
+  reason          String
+  triggeredBy     String
+  createdAt       DateTime @default(now())
+
+  @@index([family])
+  @@index([createdAt])
+}
+
+/// Reliability score per source (spec §22).
+model SourceReputation {
+  id              String   @id @default(cuid())
+  source          String   @unique
+  reliability     Int      @default(50) // 0..100
+  successfulOps   Int      @default(0)
+  fakeOps         Int      @default(0)
+  deadLinks       Int      @default(0)
+  paymentFailures Int      @default(0)
+  scamDetections  Int      @default(0)
+  avgRewardUsd    Float    @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+/// Auto-discovered potential opportunity sources (Phase-2 spec §19).
+model DiscoveredSource {
+  id              String   @id @default(cuid())
+  urlHash         String   @unique
+  url             String
+  host            String
+  organization    String   @default("")
+  sourceScore     Int      @default(0)
+  rewardMechanism String   @default("")
+  capitalRequired String   @default("none")
+  kycRequired     String   @default("unknown")
+  details         String   @default("{}")
+  status          String   @default("pending")
+  reason          String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([host])
+}
+
+// ---------------------------------------------------------------------------
+// LLM provider / model registry (spec §4C–§4R)
+// ---------------------------------------------------------------------------
+
+model ModelRecord {
+  id              String   @id @default(cuid())
+  modelId         String   @unique
+  provider        String   // openrouter | gemini | groq | cerebras | zai
+  apiType         String   // openai-compatible | gemini | custom
+  enabled         Boolean  @default(true)
+  role            String   @default("primary") // primary | secondary | reviewer | exploration | disabled
+  status          String   @default("healthy")  // healthy | degraded | unhealthy | blacklisted
+  capabilitiesJson String  // capabilities + benchmark scores (JSON)
+  performanceJson String   // success_rate, quality, latency, tokens (JSON)
+  limitsJson      String   // rpm, tpm, daily caps (JSON)
+  earningsContribUsd Float @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+/// Per-task-type model performance for adaptive routing (spec §4I, §4K).
+model ModelPerformance {
+  id              String   @id @default(cuid())
+  modelId         String
+  taskType        String   // research | coding | security | web3 | writing | verification | ...
+  attempts        Int      @default(0)
+  successes       Int      @default(0)
+  failures        Int      @default(0)
+  avgLatencyMs    Int      @default(0)
+  avgTokens       Int      @default(0)
+  avgQuality      Float    @default(0)
+  earningsUsd     Float    @default(0)
+  updatedAt       DateTime @updatedAt
+
+  @@unique([modelId, taskType])
+}
+
+// ---------------------------------------------------------------------------
+// Human control panel + approvals (spec §11, §25)
+// ---------------------------------------------------------------------------
+
+model Approval {
+  id              String   @id @default(cuid())
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  taskId          String?
+  riskLevel       String   // moderate | high | financial
+  executionLevel  Int      // 2 | 3
+  reason          String
+  status          String   @default("pending")
+  // pending | approved | rejected | improve | rework | request_changes
+  // | ask_agent | skip | pause
+  // Free-text feedback from the human (Phase 3 §4).
+  feedback        String?
+  feedbackType    String?
+  feedbackPriority String?
+  feedbackTargetAreas String?
+  decidedAt       DateTime?
+  decidedBy       String?
+  createdAt       DateTime @default(now())
+
+  @@index([status])
+  @@index([opportunityId])
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency + events + budget + state recovery (spec §17, §27, §28, §30)
+// ---------------------------------------------------------------------------
+
+/// Idempotency records (spec §30) — prevents duplicate external actions.
+model IdempotencyRecord {
+  id              String   @id @default(cuid())
+  executionId     String   @unique
+  opportunityId   String?
+  action          String
+  externalRef     String?
+  status          String   @default("pending") // pending | completed | failed
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  @@index([opportunityId])
+  @@index([action])
+}
+
+/// Append-only event log (spec §17, §28).
+model AgentEvent {
+  id              String   @id @default(cuid())
+  taskId          String?
+  task            Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  opportunityId   String?
+  opportunity     Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  agent           String
+  level           String   @default("info") // debug | info | warn | error | critical
+  event           String
+  payload         String   // JSON
+  createdAt       DateTime @default(now())
+
+  @@index([agent])
+  @@index([level])
+  @@index([createdAt])
+}
+
+/// Persisted circuit-breaker state (spec §4N, §4P, Phase-2 P2-2).
+model BreakerState {
+  id              String   @id @default(cuid())
+  modelId         String   @unique
+  status          String   @default("healthy") // healthy | degraded | unhealthy | blacklisted
+  failureCount    Int      @default(0)
+  blacklistUntil  DateTime?
+  lastFailureAt   DateTime?
+  lastSuccessAt   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// Cross-cycle agent memory — "lessons learned" (spec §17, Phase-2 P3-2).
+model AgentMemory {
+  id              String   @id @default(cuid())
+  category        String
+  title           String
+  body            String
+  payload         String?
+  tags            String   @default("[]")
+  confidence      Float    @default(0.5)
+  timesApplied    Int      @default(0)
+  superseded      Boolean  @default(false)
+  opportunityId   String?
+  agent           String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([category])
+  @@index([tags])
+  @@index([superseded])
+  @@index([createdAt])
+}
+
+/// Per-(model, taskType) cooldown state (spec §4P, Phase-2 P2-8).
+model TaskCooldown {
+  id                  String   @id @default(cuid())
+  modelId             String
+  taskType            String
+  consecutiveFailures Int      @default(0)
+  cooldownUntil       DateTime?
+  lastFailureAt       DateTime?
+  lastSuccessAt       DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([modelId, taskType])
+  @@index([cooldownUntil])
+}
+
+/// Budget tracker (spec §27) — daily/hourly/per-task limits.
+model BudgetUsage {
+  id              String   @id @default(cuid())
+  period          String   // "day:2024-01-01" | "hour:2024-01-01T14" | "task:<id>"
+  llmRequests     Int      @default(0)
+  llmTokens       Int      @default(0)
+  webRequests     Int      @default(0)
+  rpcRequests     Int      @default(0)
+  executionTimeMs Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([period])
+}
+
+/// Persisted agent runtime state (kill switch, mode, last cycle) (spec §26, §28).
+model AgentState {
+  id              String   @id @default("singleton")
+  running         Boolean  @default(false)
+  paused          Boolean  @default(false)
+  emergencyStop   Boolean  @default(false)
+  autonomyMode    String   @default("observe") // observe | assist | semi | full
+  lastCycleAt     DateTime?
+  lastCycleResult String?
+  cycleCount      Int      @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+/// Lifecycle snapshot — a periodic point-in-time record of how many
+/// opportunities are in each status + their avg/max hours in status.
+model LifecycleSnapshot {
+  id              String   @id @default(cuid())
+  bucket          String
+  status          String
+  count           Int
+  maxHoursInStatus Float
+  avgHoursInStatus Float
+  trueAvgHoursInStatus Float?
+  createdAt       DateTime @default(now())
+
+  @@unique([bucket, status])
+  @@index([bucket])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Keep legacy models for compatibility (not used by the agent).
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,496 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.75rem;
+  /* Light — warm paper white with emerald ink */
+  --background: oklch(0.985 0.002 106);
+  --foreground: oklch(0.185 0.01 160);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.185 0.01 160);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.185 0.01 160);
+  --primary: oklch(0.55 0.16 158);
+  --primary-foreground: oklch(0.985 0.002 106);
+  --secondary: oklch(0.955 0.006 106);
+  --secondary-foreground: oklch(0.28 0.02 158);
+  --muted: oklch(0.955 0.006 106);
+  --muted-foreground: oklch(0.5 0.015 160);
+  --accent: oklch(0.93 0.03 158);
+  --accent-foreground: oklch(0.28 0.04 158);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.9 0.008 106);
+  --input: oklch(0.9 0.008 106);
+  --ring: oklch(0.55 0.16 158);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.975 0.004 106);
+  --sidebar-foreground: oklch(0.185 0.01 160);
+  --sidebar-primary: oklch(0.55 0.16 158);
+  --sidebar-primary-foreground: oklch(0.985 0.002 106);
+  --sidebar-accent: oklch(0.93 0.03 158);
+  --sidebar-accent-foreground: oklch(0.28 0.04 158);
+  --sidebar-border: oklch(0.9 0.008 106);
+  --sidebar-ring: oklch(0.55 0.16 158);
+}
+
+.dark {
+  /* Dark — deep graphite with a whisper of green, NOT pure black.
+     Surfaces are layered: bg < card < popover for depth without borders. */
+  --background: oklch(0.145 0.004 160);
+  --foreground: oklch(0.93 0.005 106);
+  --card: oklch(0.185 0.005 160);
+  --card-foreground: oklch(0.93 0.005 106);
+  --popover: oklch(0.215 0.006 160);
+  --popover-foreground: oklch(0.93 0.005 106);
+  --primary: oklch(0.72 0.15 160);
+  --primary-foreground: oklch(0.16 0.03 160);
+  --secondary: oklch(0.24 0.006 160);
+  --secondary-foreground: oklch(0.93 0.005 106);
+  --muted: oklch(0.24 0.006 160);
+  --muted-foreground: oklch(0.63 0.01 160);
+  --accent: oklch(0.26 0.02 160);
+  --accent-foreground: oklch(0.93 0.005 106);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.72 0.15 160);
+  --chart-1: oklch(0.72 0.15 160);
+  --chart-2: oklch(0.75 0.1 184.704);
+  --chart-3: oklch(0.78 0.16 84.429);
+  --chart-4: oklch(0.68 0.14 303.9);
+  --chart-5: oklch(0.7 0.16 30);
+  --sidebar: oklch(0.165 0.005 160);
+  --sidebar-foreground: oklch(0.93 0.005 106);
+  --sidebar-primary: oklch(0.72 0.15 160);
+  --sidebar-primary-foreground: oklch(0.16 0.03 160);
+  --sidebar-accent: oklch(0.23 0.01 160);
+  --sidebar-accent-foreground: oklch(0.93 0.005 106);
+  --sidebar-border: oklch(1 0 0 / 7%);
+  --sidebar-ring: oklch(0.72 0.15 160);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * CryptoEarn Agent dashboard custom scrollbar
+ * Thin, themed scrollbars for the long lists in the dashboard (events log,
+ * tasks list, opportunities table, ledger, etc.). Uses the emerald accent so
+ * the thumb is visible in both light and dark mode.
+ * -------------------------------------------------------------------------- */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.7 0.15 162) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 9999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: oklch(0.7 0.15 162);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(0.55 0.18 162);
+  background-clip: content-box;
+}
+.dark .scrollbar-thin {
+  scrollbar-color: oklch(0.55 0.18 162) transparent;
+}
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: oklch(0.55 0.18 162);
+}
+
+/* Tab transition utility — used by Framer Motion in the dashboard */
+.dashboard-fade-in {
+  animation: dashboard-fade-in 220ms ease-out;
+}
+@keyframes dashboard-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Skeleton shimmer — used by loading states across the dashboard.
+ * -------------------------------------------------------------------------- */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.92 0.01 0) 25%,
+    oklch(0.96 0.01 0) 37%,
+    oklch(0.92 0.01 0) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.dark .skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.28 0.01 0) 25%,
+    oklch(0.32 0.01 0) 37%,
+    oklch(0.28 0.01 0) 63%
+  );
+  background-size: 400% 100%;
+}
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Pulse-dot — used by the agent status pill (RUNNING / PAUSED / STOPPED).
+ * A small dot that pulses to draw the eye.
+ * -------------------------------------------------------------------------- */
+.pulse-dot {
+  position: relative;
+}
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: inherit;
+  opacity: 0.6;
+  animation: pulse-dot-ring 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes pulse-dot-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Card hover lift — subtle elevation on hover for interactive cards.
+ * -------------------------------------------------------------------------- */
+.card-hover-lift {
+  transition:
+    transform 180ms ease-out,
+    box-shadow 180ms ease-out,
+    border-color 180ms ease-out;
+}
+.card-hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 24px -8px oklch(0.4 0.1 162 / 0.18),
+    0 2px 8px -4px oklch(0.4 0.1 162 / 0.12);
+  border-color: oklch(0.7 0.15 162 / 0.4);
+}
+
+/* --------------------------------------------------------------------------
+ * Row hover — for table rows + list items. Subtle emerald tint on hover.
+ * -------------------------------------------------------------------------- */
+.row-hover {
+  transition: background-color 120ms ease-out;
+}
+.row-hover:hover {
+  background-color: oklch(0.7 0.15 162 / 0.06);
+}
+.dark .row-hover:hover {
+  background-color: oklch(0.7 0.15 162 / 0.1);
+}
+
+/* --------------------------------------------------------------------------
+ * Number tick — count-up animation for KPI values.
+ * -------------------------------------------------------------------------- */
+.number-tick {
+  animation: number-tick 380ms ease-out;
+}
+@keyframes number-tick {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Slide-in — for toasts + sheet content + newly-added list items.
+ * -------------------------------------------------------------------------- */
+.slide-in-right {
+  animation: slide-in-right 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Empty-state — centered, muted, with an icon slot.
+ * -------------------------------------------------------------------------- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: oklch(0.55 0.02 0);
+}
+.dark .empty-state {
+  color: oklch(0.65 0.02 0);
+}
+
+/* --------------------------------------------------------------------------
+ * Mobile-friendly tap targets — ensure interactive elements are >=44px.
+ * -------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Hide scrollbars on horizontal tab strips (mobile) but keep scrollable.
+ * -------------------------------------------------------------------------- */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+ * Focus ring — consistent visible focus for keyboard navigation.
+ * -------------------------------------------------------------------------- */
+.focus-ring:focus-visible {
+  outline: 2px solid oklch(0.7 0.15 162);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* --------------------------------------------------------------------------
+ * App shell — v2 sidebar layout
+ * -------------------------------------------------------------------------- */
+
+/* Sidebar nav item — active state with emerald tint + left indicator */
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: oklch(0.63 0.01 160);
+  transition:
+    background-color 140ms ease-out,
+    color 140ms ease-out,
+    transform 140ms ease-out;
+  text-align: left;
+  cursor: pointer;
+}
+.nav-item:hover {
+  background-color: oklch(0.72 0.15 160 / 0.08);
+  color: oklch(0.86 0.01 106);
+}
+:root:not(.dark) .nav-item:hover {
+  color: oklch(0.3 0.03 158);
+}
+.nav-item[data-active="true"] {
+  background-color: oklch(0.72 0.15 160 / 0.12);
+  color: oklch(0.85 0.12 160);
+  font-weight: 600;
+}
+:root:not(.dark) .nav-item[data-active="true"] {
+  background-color: oklch(0.55 0.16 158 / 0.12);
+  color: oklch(0.38 0.1 158);
+}
+.nav-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -0.625rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 1.1rem;
+  border-radius: 9999px;
+  background: oklch(0.72 0.15 160);
+}
+
+/* Nav group label — tiny uppercase section headers in the sidebar */
+.nav-group-label {
+  padding: 0 0.625rem;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: oklch(0.5 0.01 160);
+}
+
+/* Hero KPI — large numeric value with gradient text in dark mode */
+.hero-kpi {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.dark .hero-kpi-glow {
+  background: linear-gradient(135deg, oklch(0.9 0.12 160), oklch(0.78 0.14 165));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Terminal drawer — frosted panel */
+.terminal-drawer {
+  backdrop-filter: blur(16px) saturate(1.4);
+  background: oklch(0.13 0.004 160 / 0.92);
+  border-top: 1px solid oklch(0.72 0.15 160 / 0.25);
+  box-shadow: 0 -12px 48px -12px oklch(0 0 0 / 0.6);
+}
+
+/* Status strip — the single consolidated action-center banner */
+.action-strip {
+  border: 1px solid oklch(0.78 0.16 84.4 / 0.3);
+  border-left: 3px solid oklch(0.78 0.16 84.4 / 0.75);
+  background: linear-gradient(
+    135deg,
+    oklch(0.78 0.16 84.4 / 0.1),
+    oklch(0.72 0.15 160 / 0.05)
+  );
+}
+
+/* Smooth height transition for collapsible terminal drawer */
+.drawer-anim {
+  animation: drawer-slide-up 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes drawer-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Funnel bar segment — pipeline visualization */
+.funnel-seg {
+  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
+}
+
+/* Subtle grid pattern for the empty chart state */
+.chart-empty-bg {
+  background-image:
+    linear-gradient(oklch(1 0 0 / 3%) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0 0 / 3%) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Badge count — the numeric sup indicator on nav items */
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 9999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: oklch(0.15 0.03 160);
+  background: oklch(0.72 0.15 160);
+  box-shadow: 0 0 0 3px oklch(0.145 0.004 160 / 0.9);
+}
+:root:not(.dark) .nav-badge {
+  color: oklch(0.985 0.002 106);
+  background: oklch(0.55 0.16 158);
+  box-shadow: 0 0 0 3px oklch(0.985 0.002 106);
+}
+/* v0.4.5: attention variant — pending approvals use amber (matches the
+   Action Center / topbar warning semantics), running tasks stay emerald. */
+.nav-badge--attention {
+  color: oklch(0.18 0.04 75);
+  background: oklch(0.78 0.14 75);
+}
+:root:not(.dark) .nav-badge--attention {
+  color: oklch(0.985 0.002 106);
+  background: oklch(0.68 0.14 70);
+}
