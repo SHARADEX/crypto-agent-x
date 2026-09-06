@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-09-04T11:24:12.970Z",
+  "fetchedAt": "2026-09-06T09:12:46.122Z",
   "wallets": [
     {
       "label": "Ronin Wallet",
@@ -9,7 +9,7 @@
       "nativeSymbol": "RON",
       "usdValue": 0,
       "tokens": [],
-      "fetchedAt": "2026-09-04T11:24:12.543Z"
+      "fetchedAt": "2026-09-06T09:12:45.290Z"
     },
     {
       "label": "MetaMask (EVM) Wallet",
@@ -19,7 +19,7 @@
       "nativeSymbol": "ETH",
       "usdValue": 0,
       "tokens": [],
-      "fetchedAt": "2026-09-04T11:24:12.544Z"
+      "fetchedAt": "2026-09-06T09:12:45.291Z"
     },
     {
       "label": "Bitcoin Wallet",
@@ -29,7 +29,8 @@
       "nativeSymbol": "BTC",
       "usdValue": 0,
       "tokens": [],
-      "fetchedAt": "2026-09-04T11:24:12.544Z"
+      "fetchedAt": "2026-09-06T09:12:45.292Z",
+      "error": "blockchain.info rate-limited (HTTP 429)."
     },
     {
       "label": "Solana Wallet",
@@ -39,7 +40,7 @@
       "nativeSymbol": "SOL",
       "usdValue": 0,
       "tokens": [],
-      "fetchedAt": "2026-09-04T11:24:12.544Z"
+      "fetchedAt": "2026-09-06T09:12:45.293Z"
     },
     {
       "label": "Tron Wallet",
@@ -49,7 +50,7 @@
       "nativeSymbol": "TRX",
       "usdValue": 0,
       "tokens": [],
-      "fetchedAt": "2026-09-04T11:24:12.545Z"
+      "fetchedAt": "2026-09-06T09:12:45.294Z"
     }
   ],
   "totalUsd": 0

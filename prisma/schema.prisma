@@ -69,6 +69,16 @@ model Opportunity {
   // during daily check-ins. Pure UI-state — never influences agent scoring.
   watched         Boolean  @default(false)
   watchedAt       DateTime?
+  // Consecutive-failure retry governor (v0.5.1): when a specialist aborts
+  // processing (e.g. the coding agent's solution fails the safety gate),
+  // attemptCount increments and nextRetryAt is set with exponential
+  // backoff. selectNextOpportunity skips cooled-down opportunities so a
+  // permanently-too-hard task cannot burn the whole LLM budget by being
+  // retried every cycle. attemptCount resets to 0 whenever the pipeline
+  // ADVANCES the opportunity (a specialist succeeded).
+  attemptCount    Int      @default(0)
+  lastAttemptAt   DateTime?
+  nextRetryAt     DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
