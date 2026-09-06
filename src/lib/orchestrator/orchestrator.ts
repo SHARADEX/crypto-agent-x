@@ -102,6 +102,26 @@ const SPECIALISTS: Record<string, SpecialistEntry> = {
 };
 
 // ---------------------------------------------------------------------------
+// Retry governor (v0.5.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Exponential backoff base for the consecutive-failure retry governor:
+ * 1st failure → 1h cooldown, then 2h, 4h, 8h… capped at 24h. Without this,
+ * a mid-flight opportunity whose specialist keeps failing (e.g. the coding
+ * agent cannot produce a safe, test-passing solution for a hard repo) gets
+ * re-picked by selectNextOpportunity EVERY cycle and burns the daily LLM
+ * budget while 150+ discovered opportunities starve behind it.
+ */
+const RETRY_BACKOFF_BASE_MS = 60 * 60 * 1000; // 1 hour
+const RETRY_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000; // 24 hours
+/** After this many CONSECUTIVE failures the opportunity is moved to the
+ * `failed` terminal state — the honest outcome for a task the pipeline
+ * cannot complete. recordCycleLesson then stores an execution_lesson so
+ * the strategy allocator learns from it. */
+const RETRY_MAX_ATTEMPTS = 6;
+
+// ---------------------------------------------------------------------------
 // processOpportunity
 // ---------------------------------------------------------------------------
 
@@ -247,7 +267,81 @@ export async function processOpportunity(
       result.abortReason = `specialist '${specialist.agent}' reported failure: ${
         (dispatched.output.result.error as string) ?? "unknown"
       }`;
+
+      // v0.5.1 retry governor — exponential backoff (see constants above).
+      // Soft states (awaiting_payment / submitted) already broke out above;
+      // anything left here is a genuine failure to advance.
+      try {
+        const nextCount = (op.attemptCount ?? 0) + 1;
+        const backoffMs = Math.min(
+          RETRY_BACKOFF_BASE_MS * 2 ** Math.max(0, nextCount - 1),
+          RETRY_BACKOFF_MAX_MS
+        );
+        const exhausted = nextCount >= RETRY_MAX_ATTEMPTS;
+        await db.opportunity.update({
+          where: { id: opportunityId },
+          data: {
+            attemptCount: nextCount,
+            lastAttemptAt: new Date(),
+            // Once exhausted the status goes terminal `failed`; keep the
+            // cooldown stamp anyway so a manual status reset still respects
+            // the governor.
+            nextRetryAt: exhausted ? null : new Date(Date.now() + backoffMs),
+            ...(exhausted ? { status: "failed" } : {}),
+          },
+        });
+        if (exhausted) {
+          result.finalStatus = "failed";
+          await logEvent(
+            "orchestrator",
+            "warn",
+            "opportunity_retry_exhausted",
+            {
+              opportunityId,
+              attemptCount: nextCount,
+              movedToStatus: "failed",
+              lastReason: result.abortReason.slice(0, 200),
+            },
+            { opportunityId }
+          );
+        } else {
+          await logEvent(
+            "orchestrator",
+            "info",
+            "opportunity_retry_backoff",
+            {
+              opportunityId,
+              attemptCount: nextCount,
+              backoffMinutes: Math.round(backoffMs / 60_000),
+              reason: result.abortReason.slice(0, 200),
+            },
+            { opportunityId }
+          );
+        }
+      } catch (govErr) {
+        console.error(
+          "[orchestrator] retry-governor update failed:",
+          govErr
+        );
+      }
       break;
+    }
+
+    // v0.5.1 retry governor — a specialist SUCCEEDED, so the pipeline is
+    // advancing: clear the consecutive-failure counter so any future
+    // failure starts the backoff from 1h again (not from the stale count).
+    if ((op.attemptCount ?? 0) > 0) {
+      await db.opportunity
+        .update({
+          where: { id: opportunityId },
+          data: { attemptCount: 0, nextRetryAt: null },
+        })
+        .catch((err) => {
+          console.error(
+            "[orchestrator] retry-governor reset failed:",
+            err
+          );
+        });
     }
 
     // After the economics agent succeeds, transition the opportunity from
@@ -770,7 +864,11 @@ export async function selectNextOpportunity(
   strategyFilter?: string | string[] | null
 ): Promise<string | null> {
   try {
-    // 1. Resume any mid-flight opportunity first.
+    // 1. Resume any mid-flight opportunity first — EXCEPT ones the retry
+    //    governor has put on cooldown (v0.5.1): a cooling-down opportunity
+    //    already failed its specialist recently; re-running it now would
+    //    just burn budget. It becomes selectable again once nextRetryAt
+    //    passes (or immediately if a new cycle of successes resets it).
     const midflight = await db.opportunity.findFirst({
       where: {
         status: {
@@ -789,6 +887,10 @@ export async function selectNextOpportunity(
             "needs_improvement",
           ],
         },
+        OR: [
+          { nextRetryAt: null },
+          { nextRetryAt: { lte: new Date() } },
+        ],
       },
       orderBy: { updatedAt: "asc" },
       select: { id: true },

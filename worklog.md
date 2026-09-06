@@ -1080,3 +1080,117 @@ opportunity cmtmr32lv003qsgwdih4x1h8d, approval cmtmtkgvd00k…).
    3 pending — investigate the badge's counting filter.
 5. [LOW] Scripts kept: scripts/run-first-task.ts (operator "drive one
    opportunity" utility — typechecked, lint-clean).
+
+---
+
+# PART 15 — ROUND 12 (Task ID: 12 — goal-readiness audit + budget-burn fix + Goal Path, 2026-09-06, ~09:20–10:30 UTC)
+
+## Context / operator request
+"check if everything is working to reach it's goal and if something is not
+working or if there is anything else that should be improved" — a full
+goal-readiness audit: verify the pipeline works toward the first payout,
+fix what doesn't, improve what's weak.
+
+## A. Audit findings (before fixes)
+1. **PR #17 LIVE + healthy**: open, mergeable_state clean, 0 comments,
+   awaiting maintainer review (normal for bounties — days-to-weeks).
+   CI on SHARADEX/crypto-agent-x: 5/5 runs green.
+2. **APPROVALS BADGE BUG (fixed)**: /api/approvals returned
+   `count: rows.length` AFTER `take: limit` — the dashboard badge queries
+   with `limit: 1`, so the sidebar badge showed "1" forever while the real
+   pending queue held 2. Fix: separate `db.approval.count` query →
+   `count` is now the true total (verified: badge shows 2).
+3. **TOKEN-BURN RETRY LOOP (root cause fixed this round)**: cycles 6-8
+   (operator-triggered 3-cycle batch at 09:31:16-24) each re-picked the
+   SAME radar bounty (queued, coding solution fails safety gate
+   `safe=false, testsPassed=false`) and burned **37k LLM tokens in 8
+   seconds** — hourly budget 48,344/40,000 → the 09:38 cycle skipped on
+   budget. 154 discovered opportunities starved behind the loop. There was
+   NO retry cap/cooldown anywhere in the schema.
+4. **ttnn data bug (fixed)**: sourceUrl still pointed at the bounty-plaza
+   aggregator (#973) instead of the real issue — same bug class as
+   fibonacci in Round 11. Real target: tenstorrent/tt-metal#54551.
+5. **tt-metal monorepo hazard (guarded)**: a depth-1 clone of tt-metal is
+   ~1GB — it would burn the 60s clone timeout, disk, and an LLM call
+   before inevitably failing.
+6. **cycle_complete error pollution (fixed)**: the PR monitor's routine
+   "1 checked, 0 merged" line was pushed into `summary.errors` — every
+   cycle_complete event was warn-level with a fake "error".
+
+## B. Fixes shipped (v0.5.1)
+1. **Retry governor** (schema + orchestrator): new Opportunity fields
+   `attemptCount` / `lastAttemptAt` / `nextRetryAt`. On a specialist
+   failure: exponential backoff 1h → 2h → 4h … cap 24h; after 6
+   CONSECUTIVE failures → terminal `failed` (recordCycleLesson stores an
+   execution_lesson so the strategy allocator learns). Any specialist
+   SUCCESS resets attemptCount. `selectNextOpportunity` now skips
+   cooling-down mid-flight opportunities (`OR: nextRetryAt null | lte now`).
+   db:push applied; radar seeded attempts=2, retry 11:33 UTC.
+   Verified via scripts/verify-governor.ts: fibonacci selectable, ttnn
+   selectable, radar [COOLING].
+2. **Repo-size guard in workspace.gitClone** (v0.5.1): GitHub repo
+   metadata `size` check (MAX_CLONE_REPO_KB = 300MB) BEFORE spawning git —
+   rejects monorepos like tt-metal up front with an honest
+   "out-of-depth" failure the governor + operator can act on. Best-effort
+   (API failure → clone proceeds, still guarded by validateUrl + timeout).
+3. **Approvals count fix** (above) + **PR-monitor quiet-poll fix**: quiet
+   polls now log debug `pr_monitor_quiet` instead of polluting
+   cycle_complete errors; only real state changes (merged /
+   changes_requested / closed) surface in the cycle summary.
+4. **Data fixes**: ttnn sourceUrl → tenstorrent/tt-metal#54551;
+   radar governor seed (scripts/data-fix-round12.ts, kept for reference).
+
+## C. NEW FEATURES (goal-readiness UI)
+1. **GET /api/opportunities/[id]/pr-status** — LIVE PR status (state,
+   merged, review status, CI check-runs, last 5 review comments) straight
+   from the GitHub API. Read-only: never mutates lifecycle state (the
+   cycle's PR monitor owns transitions — single-sourced + idempotent).
+   Resolves the PR URL exactly like the monitor (Task output →
+   submissionUrl). Verified: PR #17 → open / mergeable / awaiting review.
+2. **Goal Path card** (Overview, between hero KPIs and Pipeline funnel):
+   "Goal · First Payout" 5-step stepper (Discover → Deliver → Submit PR →
+   Merge → Payout) with solid-emerald current step + ping dot, progress
+   fraction 3/5, and a LIVE submission block: bounty title → sheet,
+   face-value $50.00, live pulse + "32s ago", state/review/CI chips,
+   PR #17 external link, last review comment, refresh cadence note.
+   Vertical stepper on <sm, horizontal on sm+ (verified 480px no-overflow).
+3. **Live PR section in the opportunity sheet**: "Pull Request — Live"
+   block (repo#17 link, Open/Awaiting-review/CI badges, review comments,
+   last-check time) for submitted/awaiting_payment opportunities.
+
+## D. Verification results
+- tsc --noEmit clean; `bun run lint` clean; 0 browser console/page errors.
+- pr-status endpoint 200 with live PR #17 data; approvals count 2 (was 1);
+  badge renders 2 in sidebar (snapshot-verified).
+- Goal Path card: desktop + 480px mobile screenshots
+  (qa-r12-goalpath-*.png, qa-r12-sheet-livepr.png); VLM review after
+  refinements: **9.2/10** (was 8.5 pre-refinement: solid emerald current
+  node, tighter stepper→PR gap, bolder title).
+- Budget guard observed working in the wild: 09:38 cycle correctly skipped
+  (hourly 48,344/40,000) — safety systems engaged as designed.
+
+## E. Governor live-cycle verification (after UTC 10:00 budget reset)
+- [pending at write time] run one cycle; expect: fibonacci processed (PR
+  status check, no LLM burn) OR ttnn picked; if ttnn coding runs →
+  repo-size guard rejects tt-metal clone fast → specialist failure →
+  `opportunity_retry_backoff` event with attempts=1/backoff=60min.
+
+## F. Unresolved / next-phase priorities
+1. [HIGH] PR #17 — waiting on maintainer. Live status now visible on the
+   dashboard (Goal Path card + sheet). Monitor handles merge → payout.
+2. [MED] ttnn approval: recommend REJECT as out-of-depth (1GB monorepo,
+   deep C++ gradient work). If left pending, the governor bounds it to 6
+   attempts over ~2 days → honest `failed` + execution lesson.
+   Radar similarly: no test framework in the repo → coding can never pass
+   the safety gate → will terminate via governor (recommend operator
+   reject both approvals to save the attempt budget).
+3. [MED] The 3-cycle batch API (run-cycles n=3) has no per-opportunity
+   cooldown INSIDE a batch — the governor's cooldown now covers this
+   (attempt 2 in the same batch will skip the cooled-down opportunity),
+   verify next round.
+4. [LOW] "160 new since last visit" on first visit — expected (null
+   lastVisit), fine.
+5. [LOW] Cycle cadence: cycles only run when triggered (dashboard Run /
+   webDevReview rounds) — the GitHub Actions 4-hourly cycle is DORMANT
+   (no DATABASE_URL secret). Consider documenting that the sandbox
+   dashboard is the de-facto cycle driver.

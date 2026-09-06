@@ -281,9 +281,31 @@ export async function runCycle(): Promise<CycleSummary> {
   try {
     const prResult = await monitorSubmittedPRs();
     if (prResult.checked > 0) {
-      summary.errors.push(
-        `PR monitor: ${prResult.checked} checked, ${prResult.merged} merged, ${prResult.changesRequested} changes_requested, ${prResult.closed} closed`
-      );
+      // v0.5.1: a routine "N checked, all quiet" poll is NOT an error — it
+      // used to be pushed into summary.errors, which made every cycle_complete
+      // event warn-level and polluted the error list the operator scans.
+      // Only state CHANGES (merged / changes_requested / closed) are surfaced
+      // as cycle items now; the quiet case logs a debug event instead.
+      const quiet =
+        prResult.merged === 0 &&
+        prResult.changesRequested === 0 &&
+        prResult.closed === 0;
+      if (quiet) {
+        await logEvent(
+          "execution",
+          "debug",
+          "pr_monitor_quiet",
+          {
+            checked: prResult.checked,
+            runId,
+          },
+          { runId }
+        );
+      } else {
+        summary.errors.push(
+          `PR monitor: ${prResult.checked} checked, ${prResult.merged} merged, ${prResult.changesRequested} changes_requested, ${prResult.closed} closed`
+        );
+      }
     }
   } catch (err) {
     summary.errors.push(

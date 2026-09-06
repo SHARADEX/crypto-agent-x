@@ -54,6 +54,37 @@ export interface OpportunityListResponse {
   filteredTotal: number;
 }
 
+/** v0.5.1 Goal Path: live PR status for a submitted opportunity.
+ * Mirrors GET /api/opportunities/[id]/pr-status. */
+export interface PrStatusResponse {
+  opportunityId: string;
+  monitored: boolean;
+  reason?: string;
+  prUrl?: string;
+  fetchError?: {
+    kind: string;
+    message: string;
+    retryable: boolean;
+  };
+  status?: {
+    state: "open" | "closed";
+    merged: boolean;
+    mergedAt: string | null;
+    mergeable: boolean | null;
+    reviewStatus: "none" | "approved" | "changes_requested" | "commented";
+    ciStatus: "unknown" | "pending" | "success" | "failure";
+    reviewComments: Array<{
+      author: string;
+      body: string;
+      state: string;
+      submittedAt: string;
+    }>;
+    prNumber: number;
+    repoFullName: string;
+  };
+  fetchedAt?: string;
+}
+
 export interface TaskRow {
   id: string;
   opportunityId?: string;
@@ -864,6 +895,10 @@ export const api = {
         `/api/opportunities/recent${qs ? `?${qs}` : ""}`
       );
     },
+    /** v0.5.1 Goal Path: live PR status (review/CI/merge) straight from
+     *  the GitHub API — read-only, does not touch lifecycle state. */
+    prStatus: (id: string) =>
+      apiFetch<PrStatusResponse>(`/api/opportunities/${id}/pr-status`),
   },
 
   wallet: {

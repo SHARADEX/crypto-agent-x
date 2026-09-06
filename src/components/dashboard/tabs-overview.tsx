@@ -36,6 +36,7 @@ import {
   TrendingUp,
   Clock,
   KeyRound,
+  ExternalLink,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -320,6 +321,368 @@ const FUNNEL_ORDER: {
   { status: "failed", label: "Failed", color: "bg-red-600/70" },
   { status: "needs_improvement", label: "Rework", color: "bg-fuchsia-500/70" },
 ];
+
+// ---------------------------------------------------------------------------
+// Goal Path (v0.5.1) — "reach the first payout" stepper + LIVE PR status
+// ---------------------------------------------------------------------------
+
+/** The single money path the whole system exists to walk. Ordered. */
+const GOAL_STEPS = [
+  { key: "discover", label: "Discover", hint: "scan sources" },
+  { key: "deliver", label: "Deliver", hint: "safe solution + tests" },
+  { key: "submit", label: "Submit PR", hint: "real GitHub PR" },
+  { key: "merge", label: "Merge", hint: "maintainer accepts" },
+  { key: "payout", label: "Payout", hint: "verified on-chain" },
+] as const;
+
+function goalStepState(
+  key: (typeof GOAL_STEPS)[number]["key"],
+  flags: {
+    hasDiscovered: boolean;
+    hasDelivered: boolean;
+    hasSubmitted: boolean;
+    hasMerged: boolean;
+    hasPaid: boolean;
+  }
+): "done" | "current" | "todo" {
+  const map: Record<(typeof GOAL_STEPS)[number]["key"], boolean> = {
+    discover: flags.hasDiscovered,
+    deliver: flags.hasDelivered,
+    submit: flags.hasSubmitted,
+    merge: flags.hasMerged,
+    payout: flags.hasPaid,
+  };
+  if (map[key]) return "done";
+  // First not-done step is "current".
+  const firstOpen = GOAL_STEPS.find((s) => !map[s.key]);
+  return firstOpen?.key === key ? "current" : "todo";
+}
+
+function GoalStepDot({
+  state,
+  children,
+}: {
+  state: "done" | "current" | "todo";
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "relative flex size-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors",
+        state === "done" &&
+          "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+        state === "current" &&
+          "border-emerald-500 bg-emerald-500 text-white shadow-[0_0_12px_-2px] shadow-emerald-500/50 dark:text-black font-bold",
+        state === "todo" &&
+          "border-border bg-muted/40 text-muted-foreground/70"
+      )}
+      aria-hidden
+    >
+      {children}
+      {state === "current" && (
+        <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-emerald-500 shadow-[0_0_0_2px_var(--background)]">
+          <span className="absolute inset-0 animate-ping rounded-full bg-emerald-500/70" />
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A small status chip used for live PR facts (review/CI/state). */
+function PrFactChip({
+  tone,
+  children,
+}: {
+  tone: "ok" | "warn" | "muted" | "info";
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-tight",
+        tone === "ok" && "border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-600 dark:text-emerald-400",
+        tone === "warn" && "border-amber-500/30 bg-amber-500/[0.08] text-amber-600 dark:text-amber-400",
+        tone === "info" && "border-sky-500/30 bg-sky-500/[0.08] text-sky-600 dark:text-sky-400",
+        tone === "muted" && "border-border bg-muted/50 text-muted-foreground"
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function GoalPathCard({
+  opportunities,
+  totalOpportunities,
+  paidUsd,
+  onOpen,
+}: {
+  opportunities: Opportunity[];
+  totalOpportunities: number;
+  paidUsd: number;
+  onOpen: (id: string) => void;
+}) {
+  // The furthest-along submission drives the "current" live block.
+  const submittedOpp = React.useMemo(
+    () =>
+      opportunities.find((o) => o.status === "awaiting_payment") ??
+      opportunities.find((o) => o.status === "submitted") ??
+      null,
+    [opportunities]
+  );
+
+  // LIVE PR status — straight from the GitHub API via the new read-only
+  // /api/opportunities/[id]/pr-status endpoint (60s refresh, never mutates
+  // lifecycle state — the cycle's PR monitor owns transitions).
+  const { data: prStatus, isFetching: prFetching } = useQuery({
+    queryKey: ["pr-status", submittedOpp?.id],
+    queryFn: () => api.opportunities.prStatus(submittedOpp!.id),
+    enabled: !!submittedOpp,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
+    retry: 1,
+  });
+
+  const flags = {
+    hasDiscovered: totalOpportunities > 0,
+    hasDelivered:
+      submittedOpp != null ||
+      opportunities.some((o) => ["executed", "approved"].includes(o.status)),
+    hasSubmitted: submittedOpp != null,
+    hasMerged: opportunities.some((o) => o.status === "awaiting_payment"),
+    hasPaid: paidUsd > 0,
+  };
+  const doneCount = GOAL_STEPS.filter(
+    (s) => goalStepState(s.key, flags) === "done"
+  ).length;
+
+  // Face value first (what lands if the PR merges), EV as fallback.
+  const rewardUsd =
+    submittedOpp?.reward?.estimated_usd ?? submittedOpp?.expectedValue ?? 0;
+  const live = prStatus?.status;
+  const prStateTone: "ok" | "warn" | "muted" | "info" =
+    live == null
+      ? "muted"
+      : live.merged
+      ? "ok"
+      : live.state === "open"
+      ? "info"
+      : "warn";
+  const lastComment = live?.reviewComments?.[live.reviewComments.length - 1];
+
+  return (
+    <Card className="border-border/60">
+      <CardContent className="p-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-1.5 text-sm font-bold tracking-tight">
+              <Target className="size-3.5 text-emerald-500" />
+              Goal · First Payout
+              <span className="ml-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                {doneCount}/{GOAL_STEPS.length}
+              </span>
+            </h3>
+            <p className="text-[10.5px] text-muted-foreground">
+              {paidUsd > 0
+                ? `Paid out ${formatUsd(paidUsd)} — compounding from here`
+                : "the money path — every stage, live"}
+            </p>
+          </div>
+        </div>
+
+        {/* Stepper — vertical on <sm, horizontal from sm up */}
+        <div role="list" className="m-0 list-none p-0">
+          <div className="hidden gap-1 sm:grid sm:grid-cols-5">
+            {GOAL_STEPS.map((step, i) => {
+              const state = goalStepState(step.key, flags);
+              return (
+                <div key={step.key} role="listitem" className="relative flex min-w-0 flex-col items-center gap-1.5 text-center">
+                  {i > 0 && (
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "absolute top-3.5 right-[calc(50%+18px)] left-[calc(-50%+18px)] h-px",
+                        state !== "todo" ? "bg-emerald-500/35" : "bg-border"
+                      )}
+                    />
+                  )}
+                  <GoalStepDot state={state}>
+                    {state === "done" ? (
+                      <CheckCircle2 className="size-3.5" />
+                    ) : (
+                      i + 1
+                    )}
+                  </GoalStepDot>
+                  <div className="min-w-0">
+                    <p
+                      className={cn(
+                        "truncate text-[11px] font-medium",
+                        state === "todo" && "text-muted-foreground/70"
+                      )}
+                    >
+                      {step.label}
+                    </p>
+                    <p className="truncate text-[9px] leading-tight text-muted-foreground/80">
+                      {step.hint}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-col gap-2 sm:hidden">
+            {GOAL_STEPS.map((step) => {
+              const state = goalStepState(step.key, flags);
+              return (
+                <div key={step.key} role="listitem" className="flex items-center gap-2.5">
+                  <GoalStepDot state={state}>
+                    {state === "done" ? (
+                      <CheckCircle2 className="size-3.5" />
+                    ) : (
+                      GOAL_STEPS.findIndex((s) => s.key === step.key) + 1
+                    )}
+                  </GoalStepDot>
+                  <div className="min-w-0">
+                    <p
+                      className={cn(
+                        "text-[11px] font-medium leading-tight",
+                        state === "todo" && "text-muted-foreground/70"
+                      )}
+                    >
+                      {step.label}
+                      <span className="ml-1.5 text-[9px] font-normal text-muted-foreground/80">
+                        {step.hint}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* LIVE submission block */}
+        {submittedOpp ? (
+          <div className="mt-2.5 rounded-lg border border-border/70 bg-muted/20 p-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+              <GitBranch className="size-3.5 shrink-0 text-emerald-500" />
+              <button
+                type="button"
+                onClick={() => onOpen(submittedOpp.id)}
+                className="min-w-0 truncate text-left text-xs font-semibold underline decoration-border underline-offset-2 hover:decoration-emerald-500/60"
+              >
+                {truncateText(submittedOpp.title, 52)}
+              </button>
+              {rewardUsd > 0 && (
+                <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                  {formatUsd(rewardUsd)}
+                </span>
+              )}
+            </div>
+
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+              {/* live pulse + refreshed time */}
+              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                <span className="relative flex size-1.5">
+                  <span
+                    className={cn(
+                      "absolute inset-0 rounded-full",
+                      prFetching ? "animate-ping bg-emerald-500/70" : "bg-muted-foreground/40"
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      "absolute inset-0 rounded-full",
+                      prFetching ? "bg-emerald-500" : "bg-muted-foreground/60"
+                    )}
+                  />
+                </span>
+                live
+                {prStatus?.fetchedAt
+                  ? ` · ${formatRelativeTime(prStatus.fetchedAt)}`
+                  : " · connecting"}
+              </span>
+
+              {live ? (
+                <>
+                  <PrFactChip tone={prStateTone}>
+                    {live.merged ? "Merged" : live.state === "open" ? "Open" : "Closed"}
+                  </PrFactChip>
+                  <PrFactChip
+                    tone={
+                      live.reviewStatus === "approved"
+                        ? "ok"
+                        : live.reviewStatus === "changes_requested"
+                        ? "warn"
+                        : "muted"
+                    }
+                  >
+                    {live.reviewStatus === "none"
+                      ? "awaiting review"
+                      : live.reviewStatus.replace(/_/g, " ")}
+                  </PrFactChip>
+                  {live.ciStatus !== "unknown" && (
+                    <PrFactChip
+                      tone={
+                        live.ciStatus === "success"
+                          ? "ok"
+                          : live.ciStatus === "failure"
+                          ? "warn"
+                          : "info"
+                      }
+                    >
+                      CI {live.ciStatus}
+                    </PrFactChip>
+                  )}
+                </>
+              ) : (
+                <PrFactChip tone="muted">
+                  {prStatus?.monitored === false
+                    ? "no live PR (simulated)"
+                    : prStatus?.fetchError
+                    ? `status unavailable · ${prStatus.fetchError.kind}`
+                    : "checking…"}
+                </PrFactChip>
+              )}
+
+              {prStatus?.prUrl && (
+                <a
+                  href={prStatus.prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-auto inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:border-emerald-500/40 hover:text-foreground"
+                >
+                  PR #{live?.prNumber ?? "?"}
+                  <ExternalLink className="size-2.5" />
+                  <span className="sr-only">open PR on GitHub in a new tab</span>
+                </a>
+              )}
+            </div>
+
+            {lastComment && (
+              <p className="mt-2 border-l-2 border-border pl-2 text-[10px] leading-snug text-muted-foreground">
+                <span className="font-semibold text-foreground/80">
+                  {lastComment.author} · {lastComment.state.toLowerCase().replace(/_/g, " ")}:
+                </span>{" "}
+                {truncateText(lastComment.body, 160)}
+              </p>
+            )}
+
+            <p className="mt-2 text-[10px] leading-snug text-muted-foreground/80">
+              The agent re-checks this PR every cycle (merge → payout watch,
+              changes requested → rework loop). This card refreshes every 60s.
+            </p>
+          </div>
+        ) : (
+          <p className="mt-3 rounded-lg border border-dashed border-border p-2.5 text-[10px] leading-snug text-muted-foreground">
+            No submission in flight yet — the pipeline is working on the
+            highest-EV opportunity. Approvals you grant unlock real PRs.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function PipelineFunnel({
   byStatus,
@@ -1019,6 +1382,14 @@ export function OverviewTab({
           isLoading={analyticsLoading}
         />
       </div>
+
+      {/* v0.5.1: Goal Path — the money path stepper + live PR status */}
+      <GoalPathCard
+        opportunities={opportunities}
+        totalOpportunities={opps?.total ?? 0}
+        paidUsd={analytics?.totalVerifiedEarningsUsd ?? 0}
+        onOpen={onOpenOpportunity}
+      />
 
       {/* Pipeline funnel */}
       <Card className="border-border/60">

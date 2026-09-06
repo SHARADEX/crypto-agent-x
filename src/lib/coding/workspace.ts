@@ -160,6 +160,14 @@ const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
 
 /** Default clone timeout (60s). */
 const DEFAULT_CLONE_TIMEOUT_MS = 60_000;
+/**
+ * v0.5.1 repo-size guard: GitHub repo `size` (in KB per the repo metadata
+ * API) above which gitClone refuses up front. 300MB covers every normal
+ * small/medium bounty repo while rejecting monorepos (tt-metal ≈ 1GB+)
+ * that can neither clone within the 60s timeout nor fit the sandbox's
+ * working set.
+ */
+const MAX_CLONE_REPO_KB = 300 * 1024;
 
 /** Default install-deps timeout (120s — npm install is slow). */
 const DEFAULT_INSTALL_TIMEOUT_MS = 120_000;
@@ -629,6 +637,14 @@ export class CodingWorkspace {
    * localhost — the SSRF / homograph guards from spec §32). Records the
    * request via `BudgetManager.recordWebRequest` so the daily web-request
    * cap applies to clones too.
+   *
+   * v0.5.1 repo-size guard: before spawning git, the GitHub repo's `size`
+   * (KB, from the public repo metadata API) is checked against
+   * MAX_CLONE_REPO_KB. Monorepos like tenstorrent/tt-metal measure in the
+   * ~1GB range — a shallow clone attempt burns the 60s clone timeout,
+   * disk, and a coding-LLM call before inevitably failing. Rejecting up
+   * front produces an honest, cheap failure the retry governor (and the
+   * operator) can act on.
    */
   async gitClone(
     url: string,
@@ -645,6 +661,52 @@ export class CodingWorkspace {
         command: ["git", "clone", url],
         spawnError: `URL rejected: ${validation.reasons.join("; ")}`,
       };
+    }
+
+    // v0.5.1: repo-size guard (github.com targets only).
+    const ghMatch = validation.normalized.match(
+      /^https:\/\/github\.com\/([^/]+)\/([^/.]+?)(?:\.git)?$/
+    );
+    if (ghMatch) {
+      const [, owner, repo] = ghMatch;
+      try {
+        const headers: Record<string, string> = {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        };
+        if (process.env.GITHUB_TOKEN) {
+          headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+        }
+        const res = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}`,
+          { headers, signal: AbortSignal.timeout(8_000) }
+        );
+        if (res.ok) {
+          const meta = (await res.json()) as { size?: number };
+          const sizeKb = typeof meta.size === "number" ? meta.size : 0;
+          if (sizeKb > MAX_CLONE_REPO_KB) {
+            const sizeMb = Math.round(sizeKb / 1024);
+            const limitMb = Math.round(MAX_CLONE_REPO_KB / 1024);
+            return {
+              exitCode: 126,
+              stdout: "",
+              stderr:
+                `git clone rejected: repository ${owner}/${repo} is ~${sizeMb}MB ` +
+                `(repo metadata) which exceeds the ${limitMb}MB clone limit. ` +
+                `The agent cannot work a monorepo of this size within the ` +
+                `sandbox; this opportunity should be rejected as out-of-depth.`,
+              timedOut: false,
+              durationMs: 0,
+              command: ["git", "clone", url],
+              spawnError: `repo too large: ~${sizeMb}MB > ${limitMb}MB limit`,
+            };
+          }
+        }
+        // Non-ok metadata responses are best-effort — fall through to the
+        // actual clone (the clone's own validateUrl + timeout still guard it).
+      } catch {
+        // Metadata check is best-effort — never block the clone on it.
+      }
     }
 
     // Count the clone as a web request for budget purposes.

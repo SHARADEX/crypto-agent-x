@@ -67,8 +67,17 @@ export async function GET(req: Request) {
       take: limit,
     });
 
+    // v0.5.1 badge fix: `count` is the TOTAL number of rows matching the
+    // status filter, NOT the page size. The dashboard badge queries with
+    // `limit: 1` (bandwidth-cheap) and reads `count` — returning
+    // `rows.length` made the sidebar badge show "1" forever while the real
+    // queue had more. Separate count query; both values stay consistent.
+    const total = await db.approval.count({
+      where: { status } as never,
+    });
+
     return NextResponse.json(
-      { approvals: rows, count: rows.length },
+      { approvals: rows, count: total },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (err) {

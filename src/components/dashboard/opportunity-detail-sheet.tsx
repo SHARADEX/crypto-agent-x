@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, Loader2, ShieldCheck, ShieldAlert, Clock } from "lucide-react";
+import { ExternalLink, Loader2, ShieldCheck, ShieldAlert, Clock, GitPullRequest } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, formatUsd, formatRelativeTime, statusColor } from "./lib/api";
@@ -72,6 +72,21 @@ export function OpportunityDetailSheet({
   });
 
   const op = data?.opportunity;
+
+  // v0.5.1: live PR status for submitted / awaiting_payment opportunities —
+  // reads the new /api/opportunities/[id]/pr-status endpoint (GitHub API,
+  // read-only). Renders as its own section below the actions.
+  const prStatusQuery = useQuery({
+    queryKey: ["pr-status", opportunityId],
+    queryFn: () => api.opportunities.prStatus(opportunityId as string),
+    enabled:
+      !!opportunityId &&
+      open &&
+      (op?.status === "submitted" || op?.status === "awaiting_payment"),
+    refetchInterval: 60_000,
+    staleTime: 45_000,
+    retry: 1,
+  });
 
   // Since v0.4.1 the detail endpoint emits the same canonical shape as the
   // LIST endpoint (nested reward.estimated_usd). Older flat responses
@@ -306,6 +321,109 @@ export function OpportunityDetailSheet({
             ) : null}
 
             <Separator />
+
+            {/* v0.5.1: LIVE PR status (submitted / awaiting_payment only) */}
+            {op && (op.status === "submitted" || op.status === "awaiting_payment") ? (
+              <section>
+                <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
+                  <GitPullRequest className="size-3.5 text-emerald-500" />
+                  Pull Request — Live
+                </h3>
+                {prStatusQuery.isLoading ? (
+                  <Skeleton className="h-20 w-full" />
+                ) : prStatusQuery.data?.monitored && prStatusQuery.data.status ? (
+                  <div className="rounded-md border border-border/60 bg-card/40 p-3">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+                      {prStatusQuery.data.prUrl ? (
+                        <a
+                          href={prStatusQuery.data.prUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-1 font-mono font-semibold underline decoration-border underline-offset-2 hover:decoration-emerald-500/60"
+                        >
+                          {prStatusQuery.data.status.repoFullName}#{prStatusQuery.data.status.prNumber}
+                          <ExternalLink className="size-3" />
+                          <span className="sr-only">open PR on GitHub in a new tab</span>
+                        </a>
+                      ) : null}
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          prStatusQuery.data.status.merged
+                            ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                            : prStatusQuery.data.status.state === "open"
+                            ? "border-sky-500/30 bg-sky-500/15 text-sky-700 dark:text-sky-300"
+                            : "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300"
+                        )}
+                      >
+                        {prStatusQuery.data.status.merged
+                          ? "Merged"
+                          : prStatusQuery.data.status.state === "open"
+                          ? "Open"
+                          : "Closed"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          prStatusQuery.data.status.reviewStatus === "approved"
+                            ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                            : prStatusQuery.data.status.reviewStatus === "changes_requested"
+                            ? "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                            : ""
+                        )}
+                      >
+                        {prStatusQuery.data.status.reviewStatus === "none"
+                          ? "Awaiting review"
+                          : prStatusQuery.data.status.reviewStatus.replace(/_/g, " ")}
+                      </Badge>
+                      {prStatusQuery.data.status.ciStatus !== "unknown" && (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            prStatusQuery.data.status.ciStatus === "success"
+                              ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                              : prStatusQuery.data.status.ciStatus === "failure"
+                              ? "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300"
+                              : ""
+                          )}
+                        >
+                          CI · {prStatusQuery.data.status.ciStatus}
+                        </Badge>
+                      )}
+                    </div>
+                    {prStatusQuery.data.status.reviewComments.length > 0 && (
+                      <div className="mt-2 space-y-1.5">
+                        {prStatusQuery.data.status.reviewComments
+                          .slice(-2)
+                          .map((c, i) => (
+                            <p
+                              key={i}
+                              className="border-l-2 border-border pl-2 text-[11px] leading-snug text-muted-foreground"
+                            >
+                              <span className="font-semibold text-foreground/80">
+                                {c.author} · {c.state.toLowerCase().replace(/_/g, " ")}:
+                              </span>{" "}
+                              {c.body.slice(0, 200)}
+                            </p>
+                          ))}
+                      </div>
+                    )}
+                    <p className="mt-2 text-[10px] text-muted-foreground/70">
+                      Live from the GitHub API · refreshed every 60s · last check{" "}
+                      {prStatusQuery.data.fetchedAt
+                        ? formatRelativeTime(prStatusQuery.data.fetchedAt)
+                        : "—"}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="rounded-md border border-dashed border-border p-2.5 text-xs text-muted-foreground">
+                    {prStatusQuery.data?.reason ??
+                      prStatusQuery.data?.fetchError?.message ??
+                      "Live PR status unavailable right now."}
+                  </p>
+                )}
+              </section>
+            ) : null}
 
             {/* Related tasks */}
             <section>
