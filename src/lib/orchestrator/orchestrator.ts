@@ -882,7 +882,15 @@ export async function selectNextOpportunity(
             "queued",
             "approved",
             "executed",
-            "submitted", // Phase-3 fix (Issue 10): resume submitted PRs too.
+            // NOTE (v0.5.1 starvation fix): "submitted" is deliberately NOT
+            // resumed here. decideNextSpecialist("submitted") returns null —
+            // the PR monitor (monitorSubmittedPRs, loop step 9b) owns that
+            // status and runs EVERY cycle regardless of selection. Resuming
+            // a submitted opportunity here just burns the cycle's single
+            // selection on a guaranteed no-op (processOpportunity breaks
+            // immediately), starving every other mid-flight opportunity for
+            // the days/weeks the PR waits for review. "awaiting_payment"
+            // stays — the payment agent does real work there.
             "awaiting_payment",
             "needs_improvement",
           ],

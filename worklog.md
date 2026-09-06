@@ -1169,11 +1169,29 @@ fix what doesn't, improve what's weak.
 - Budget guard observed working in the wild: 09:38 cycle correctly skipped
   (hourly 48,344/40,000) — safety systems engaged as designed.
 
-## E. Governor live-cycle verification (after UTC 10:00 budget reset)
-- [pending at write time] run one cycle; expect: fibonacci processed (PR
-  status check, no LLM burn) OR ttnn picked; if ttnn coding runs →
-  repo-size guard rejects tt-metal clone fast → specialist failure →
-  `opportunity_retry_backoff` event with attempts=1/backoff=60min.
+## E. Governor live-cycle verification (DONE — 10:01–10:04 UTC, cycles 10–13)
+- **cycle 10/11**: fibonacci (submitted) selected → PR status check, 0
+  steps, 0 errors — quiet-poll fix confirmed (pr_monitor_quiet debug
+  events; PR #17 open, review none).
+- **Starvation bug found + fixed mid-verification**: cycles 10-11 kept
+  re-selecting fibonacci even though decideNextSpecialist("submitted")
+  returns null (deliberate no-op — the PR monitor owns that status).
+  A days-old submitted PR would burn the cycle's single selection slot
+  forever. Removed "submitted" from the mid-flight resume list (PR monitor
+  still polls it every cycle via its own findMany — unaffected).
+- **cycle 12 (post-fix)**: ttnn selected → coding → clone of
+  tenstorrent/tt-metal REJECTED in 3s by the size guard:
+  "~1623MB (repo metadata) which exceeds the 300MB clone limit"
+  (it really is 1.6GB — the guard read real metadata). Coding continued
+  on an empty workspace, failed the safety gate, and the governor fired:
+  `opportunity_retry_backoff { attemptCount: 1, backoffMinutes: 60 }`.
+  Total cycle cost: 69s, ~1 LLM call, 0 errors.
+- **cycle 13**: with ttnn (11:03) + radar (11:33) both cooling, a FRESH
+  discovered opportunity (cmtmr32ma… "fix: reject path traversal in the
+  post id route") finally got its turn: research ✓ → economics ✓ →
+  queued → coding failed safety gate → governor backoff 1h. The 154
+  starving opportunities now rotate through honestly.
+- dev.log clean (all routes 200, no runtime errors).
 
 ## F. Unresolved / next-phase priorities
 1. [HIGH] PR #17 — waiting on maintainer. Live status now visible on the
